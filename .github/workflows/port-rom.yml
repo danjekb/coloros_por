@@ -1,0 +1,145 @@
+name: Port ROM
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_rom_url:
+        description: Direct HTTPS URL of the full base ROM
+        required: true
+        type: string
+      port_rom_url:
+        description: Direct HTTPS URL of the full donor ROM
+        required: true
+        type: string
+      second_port_rom_url:
+        description: Optional second donor ROM (requires port_parts)
+        required: false
+        type: string
+      port_parts:
+        description: Partitions to take from the second donor, comma-separated
+        required: false
+        type: string
+      runner:
+        description: Self-hosted requires a disposable Linux x64 runner with sudo
+        type: choice
+        default: ubuntu-24.04
+        options:
+          - ubuntu-24.04
+          - self-hosted
+
+permissions:
+  contents: read
+
+jobs:
+  port:
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "Linux", "X64"]') || inputs.runner }}
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs and runner
+        env:
+          BASE_ROM_URL: ${{ inputs.base_rom_url }}
+          PORT_ROM_URL: ${{ inputs.port_rom_url }}
+          SECOND_PORT_ROM_URL: ${{ inputs.second_port_rom_url }}
+          PORT_PARTS: ${{ inputs.port_parts }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from urllib.parse import urlsplit
+          for key in ('BASE_ROM_URL', 'PORT_ROM_URL', 'SECOND_PORT_ROM_URL'):
+              value = os.environ[key]
+              if key == 'SECOND_PORT_ROM_URL' and not value:
+                  continue
+              parsed = urlsplit(value)
+              if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or any(c.isspace() for c in value):
+                  raise SystemExit(f'{key}: use a direct HTTPS URL without embedded credentials or whitespace')
+          parts = os.environ['PORT_PARTS']
+          if bool(os.environ['SECOND_PORT_ROM_URL']) != bool(parts):
+              raise SystemExit('Second donor URL and port_parts must be provided together')
+          if parts and not re.fullmatch(r'[A-Za-z0-9_]+(?:,[A-Za-z0-9_]+)*', parts):
+              raise SystemExit('port_parts must be comma-separated partition names')
+          PY
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          df -h .
+          available_kb=$(df -Pk . | awk 'NR==2 {print $4}')
+          if (( available_kb < 30 * 1024 * 1024 )); then
+            echo '::error::At least 30 GiB free space is required; large ROMs may require substantially more. Use a larger runner.'
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            aria2 python3 busybox zip unzip p7zip-full openjdk-21-jre-headless \
+            zstd bc android-sdk-libsparse-utils xmlstarlet dos2unix curl
+          echo 'JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64' >> "$GITHUB_ENV"
+          echo '/usr/lib/jvm/java-21-openjdk-amd64/bin' >> "$GITHUB_PATH"
+          bash -n port.sh functions.sh
+          java -version
+
+      - name: Download ROMs and run port
+        env:
+          BASE_ROM_URL: ${{ inputs.base_rom_url }}
+          PORT_ROM_URL: ${{ inputs.port_rom_url }}
+          SECOND_PORT_ROM_URL: ${{ inputs.second_port_rom_url }}
+          PORT_PARTS: ${{ inputs.port_parts }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/ci-inputs
+          download() {
+            curl --fail --location --retry 3 --connect-timeout 30 \
+              --proto '=https' --proto-redir '=https' --output "$2" "$1"
+            test -s "$2"
+            unzip -tq "$2"
+          }
+          download "$BASE_ROM_URL" "$PWD/build/ci-inputs/base.zip"
+          download "$PORT_ROM_URL" "$PWD/build/ci-inputs/port.zip"
+          args=("$PWD/build/ci-inputs/base.zip" "$PWD/build/ci-inputs/port.zip")
+          if [[ -n "$SECOND_PORT_ROM_URL" ]]; then
+            download "$SECOND_PORT_ROM_URL" "$PWD/build/ci-inputs/second.zip"
+            args+=("$PWD/build/ci-inputs/second.zip" "${PORT_PARTS//,/ }")
+          fi
+          bash port.sh "${args[@]}" 2>&1 | tee build/ci-port.log
+
+      - name: Collect completed packages
+        run: |
+          set -euo pipefail
+          mkdir -p build/ci-artifacts
+          while IFS= read -r -d '' package; do
+            unzip -tq "$package"
+            cp -- "$package" build/ci-artifacts/
+          done < <(find out -maxdepth 2 -type f -name '*.zip' -print0)
+          shopt -s nullglob
+          packages=(build/ci-artifacts/*.zip)
+          if (( ${#packages[@]} == 0 )); then
+            echo '::error::port.sh did not produce a ROM ZIP'
+            exit 1
+          fi
+          cd build/ci-artifacts
+          sha256sum -- *.zip > SHA256SUMS
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: ported-rom-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/ci-artifacts/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: port-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/ci-port.log
+            build/port.log
+          if-no-files-found: warn
+          retention-days: 3

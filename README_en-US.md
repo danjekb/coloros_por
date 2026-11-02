@@ -42,6 +42,13 @@ sudo ./port.sh /path/to/base-rom /path/to/port-rom
 
 Use base and port packages that you are authorized to obtain. Back up important data and verify the target device, partition layout, and flashing method first; mistakes can cause data loss or leave a device unable to boot. Do not upload full ROM packages, keys, device serial numbers, or other personal data in an issue.
 
+## GitHub Actions
+
+Use **Actions → Port ROM → Run workflow** to provide direct HTTPS URLs of full
+base and donor ROM ZIPs. The workflow uploads completed packages and build logs
+as artifacts. See the [workflow guide](docs/GITHUB_ACTIONS.md) (Russian) for
+runner requirements, optional second donor inputs, and limitations.
+
 ## Contributing
 
 - [Contribution guide](CONTRIBUTING.md): information to include in issues and pull requests.
