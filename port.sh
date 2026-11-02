@@ -147,8 +147,8 @@ port_resolve_input() {
         }
         downloaded_path="${PORT_ROOT}/${downloaded_name}"
         if [[ ! -s "${downloaded_path}" ]]; then
-            aria2c --max-download-limit=1024M --file-allocation=none -s10 -x10 -j10 \
-                --dir="${PORT_ROOT}" --out="${downloaded_name}" "${value}" || {
+            python3 "${PORT_ROOT}/bin/oplus_ota_downloader.py" \
+                --output "${PORT_ROOT}" --name "${downloaded_name}" "${value}" || {
                 error "下载错误" "Download error"
                 return 1
             }

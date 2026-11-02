@@ -77,11 +77,12 @@ jobs:
           sudo apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             aria2 python3 busybox zip unzip p7zip-full openjdk-21-jre-headless \
-            zstd bc android-sdk-libsparse-utils xmlstarlet dos2unix curl
+            zstd bc android-sdk-libsparse-utils xmlstarlet dos2unix python3-requests python3-tqdm
           echo 'JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64' >> "$GITHUB_ENV"
           echo '/usr/lib/jvm/java-21-openjdk-amd64/bin' >> "$GITHUB_PATH"
           bash -n port.sh functions.sh
           java -version
+          python3 -m unittest discover -s tests -v
 
       - name: Download ROMs and run port
         env:
@@ -93,8 +94,8 @@ jobs:
           set -euo pipefail
           mkdir -p build/ci-inputs
           download() {
-            curl --fail --location --retry 3 --connect-timeout 30 \
-              --proto '=https' --proto-redir '=https' --output "$2" "$1"
+            python3 bin/oplus_ota_downloader.py --no-resume \
+              --output "$(dirname "$2")" --name "$(basename "$2")" "$1"
             test -s "$2"
             unzip -tq "$2"
           }
