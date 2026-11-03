@@ -1069,20 +1069,37 @@ else
 fi
 
 
-targetOplusService=$(find build/portrom/images/ -name "oplus-services.jar")
-if [[ -f build/${app_patch_folder}/patched/oplus-services.jar ]];then
-    blue "复制已经处理过的oplus-services.jar"
-    cp -rfv build/${app_patch_folder}/patched/oplus-services.jar $targetOplusService
-
-elif [[ -f $targetOplusService ]];then
+targetOplusService=$(find build/portrom/images/ -type f -name "oplus-services.jar" -print -quit)
+oplus_service_cache="build/${app_patch_folder}/patched/oplus-services.jar"
+if [[ "${port_android_version}" == 17 ]]; then
+    # Separate from older cached JARs, which lack the engineer boot patch.
+    oplus_service_cache="build/${app_patch_folder}/patched/oplus-services-cos17-engineer-v1.jar"
+    if [[ ! -f "${targetOplusService}" ]]; then
+        error "缺少 oplus-services.jar" "COS17 engineer patch requires oplus-services.jar"
+        exit 1
+    fi
+fi
+if [[ -f "${oplus_service_cache}" ]]; then
+    cp -p -- "${oplus_service_cache}" "${targetOplusService}" || exit 1
+elif [[ -f "${targetOplusService}" ]]; then
     blue "Removing GSM Restriction"
-    cp -rf $targetOplusService tmp/$(basename $targetOplusService).bak
-    java -jar bin/apktool/APKEditor.jar d -f -i $targetOplusService -o tmp/OplusService
-    targetSmali=$(find tmp -type f -name "OplusBgSceneManager.smali")
-    python3 bin/patchmethod.py $targetSmali "-isGmsRestricted"
-    java -jar bin/apktool/APKEditor.jar b -f -i tmp/OplusService -o build/${app_patch_folder}/patched/oplus-services.jar
-    cp -rfv build/${app_patch_folder}/patched/oplus-services.jar $targetOplusService
-
+    cp -p -- "${targetOplusService}" "tmp/$(basename "${targetOplusService}").bak" || exit 1
+    java -jar bin/apktool/APKEditor.jar d -f -i "${targetOplusService}" -o tmp/OplusService || exit 1
+    targetSmali=$(find tmp/OplusService -type f -name "OplusBgSceneManager.smali" -print -quit)
+    if [[ -n "${targetSmali}" ]]; then
+        python3 bin/patchmethod.py "${targetSmali}" "-isGmsRestricted" || exit 1
+    fi
+    if [[ "${port_android_version}" == 17 ]]; then
+        python3 bin/patch_cos17_engineer.py tmp/OplusService || exit 1
+    fi
+    mkdir -p "$(dirname "${oplus_service_cache}")"
+    java -jar bin/apktool/APKEditor.jar b -f -i tmp/OplusService -o "${oplus_service_cache}.new.jar" || exit 1
+    unzip -tq "${oplus_service_cache}.new.jar" || exit 1
+    mv -f -- "${oplus_service_cache}.new.jar" "${oplus_service_cache}" || exit 1
+    cp -p -- "${oplus_service_cache}" "${targetOplusService}" || exit 1
+fi
+if [[ "${port_android_version}" == 17 ]]; then
+    rm -rf -- build/portrom/images/vendor/app/soterservice
 fi
 
 if { [[ ${base_device_family} == "OPSM8250" ]] || [[ ${base_device_family} == "OPSM8350" ]]; } \

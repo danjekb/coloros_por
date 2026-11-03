@@ -94,6 +94,7 @@ jobs:
           python3 -m unittest discover -s tests -v
           python3 tests/smoke_ota_patch.py
           python3 tests/smoke_wallpapers_patch.py
+          python3 tests/smoke_cos17_engineer.py
 
       - name: Download ROMs
         timeout-minutes: 90
