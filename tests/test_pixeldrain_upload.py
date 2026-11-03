@@ -40,6 +40,31 @@ class PixeldrainTests(unittest.TestCase):
             upload_file(self.file, '', self.session)
         self.session.put.assert_not_called()
 
+    def test_file_info_without_success_flag(self):
+        reply = self.response()
+        del reply.json.return_value['success']
+        self.session.put.return_value = reply
+        self.assertEqual(upload_file(self.file, 'test-secret', self.session), 'https://pixeldrain.com/u/abc123')
+        self.session.get.assert_not_called()
+
+    def test_id_only_response_uses_info_without_reupload(self):
+        reply = self.response()
+        reply.json.return_value = {'id': 'abc123'}
+        self.session.put.return_value = reply
+        self.session.get.return_value = self.response(200)
+        self.assertEqual(upload_file(self.file, 'test-secret', self.session), 'https://pixeldrain.com/u/abc123')
+        self.session.put.assert_called_once()
+        self.session.get.assert_called_once_with('https://pixeldrain.com/api/file/abc123/info', timeout=(20, 30), allow_redirects=False)
+
+    def test_info_failure_does_not_reupload(self):
+        reply = self.response()
+        reply.json.return_value = {'id': 'abc123'}
+        self.session.put.return_value = reply
+        self.session.get.side_effect = requests.ConnectionError('info unavailable')
+        with self.assertRaisesRegex(RuntimeError, 'already uploaded to https://pixeldrain.com/u/abc123'):
+            upload_file(self.file, 'test-secret', self.session)
+        self.session.put.assert_called_once()
+
     def test_api_failures_and_size_mismatch(self):
         for reply in (self.response(401), self.response(413), self.response(success=False),
                       self.response(id='../bad'), self.response(size=999), self.response(302)):

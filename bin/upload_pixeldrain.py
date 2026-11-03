@@ -33,18 +33,41 @@ def upload_file(path, api_key, session):
                     if not 200 <= response.status_code < 300:
                         raise RuntimeError(f'Pixeldrain HTTP {response.status_code}: check API key, account quota and file size limit')
                     result = response.json()
-                    if not isinstance(result, dict):
-                        raise ValueError('Pixeldrain returned a non-object response')
-                    identifier = result.get('id', '')
-                    if result.get('success') is not True or not isinstance(identifier, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', identifier):
-                        raise ValueError('Pixeldrain returned an invalid upload result')
-                    if result.get('size') != size:
-                        raise ValueError('Pixeldrain reported an unexpected uploaded size')
-                    return f'https://pixeldrain.com/u/{identifier}'
         except (requests.ConnectionError, requests.Timeout):
             if attempt == 2:
                 raise
             time.sleep(5)
+            continue
+        break
+
+    # A successful PUT may return only file info or {"id": "..."}, without
+    # a success flag. Validate the ID and verify size instead of requiring
+    # an optional field. Never repeat PUT because result verification failed.
+    if not isinstance(result, dict):
+        raise ValueError('Pixeldrain returned a non-object response')
+    identifier = result.get('id', '')
+    if ('success' in result and result['success'] is not True) or not isinstance(identifier, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', identifier):
+        raise ValueError('Pixeldrain returned an invalid upload result')
+    url = f'https://pixeldrain.com/u/{identifier}'
+    print(f'Pixeldrain accepted upload: {url}', flush=True)
+    reported_size = result.get('size')
+    if reported_size is None:
+        try:
+            with session.get(f'https://pixeldrain.com/api/file/{identifier}/info',
+                             timeout=(20, 30), allow_redirects=False) as response:
+                if not 200 <= response.status_code < 300:
+                    raise ValueError(f'File info HTTP {response.status_code}')
+                info = response.json()
+                if not isinstance(info, dict) or info.get('success') is False:
+                    raise ValueError('Invalid file info response')
+                if 'id' in info and info['id'] != identifier:
+                    raise ValueError('File info ID does not match upload')
+                reported_size = info.get('size')
+        except (requests.RequestException, ValueError) as error:
+            raise RuntimeError(f'File already uploaded to {url}; could not verify file info ({type(error).__name__}). Do not re-upload blindly.') from error
+    if type(reported_size) is not int or reported_size != size:
+        raise ValueError(f'File already uploaded to {url}, but Pixeldrain reported an unexpected size')
+    return url
 
 
 def main():
