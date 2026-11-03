@@ -111,6 +111,14 @@ styles.xml (`expected reference but got ...`) и исключает лишнюю
 apktool/smali. При упаковке fastboot-прошивки zstd использует все доступные
 ядра; ZIP сохраняет уже сжатые файлы без повторного сжатия.
 
+В репозитории закреплён официальный apktool **3.0.3** вместо старого
+2.9.0-SNAPSHOT. Источник и SHA-256 записаны в `bin/apktool/APKTOOL_VERSION.md`;
+Actions проверяет контрольную сумму перед запуском тестов. Для dex-only патчей
+OTA/Wallpapers сборка использует `--copy-original`, сохраняя исходный бинарный
+манифест. Тест `smoke_apktool_resources.py` проверяет установку framework,
+декодирование и пересборку ресурсов с изменением Wi-Fi bool. Проверка на
+полном framework-res.apk конкретной донорской ROM требует нового запуска.
+
 Для портов ColorOS 17 (Android 17) в `oplus-services.jar` очищается тело
 `OplusEngineerFwService.onBootPhase(I)V` до `.locals 0` и `return-void`.
 Также удаляется `vendor/app/soterservice`. Для Android 16 и ниже эти действия

@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory() as tmp:
   z.write(p/'classes.dex','classes.dex');z.writestr('resources.arsc',b'opaque OEM resources');z.writestr('AndroidManifest.xml',b'opaque binary manifest')
  run(['java','-jar','bin/apktool/apktool.jar','d','-f','-r',str(p/'Wallpapers.apk'),'-o',str(p/'decoded')])
  run(['python3','bin/patch_inspiration_aod_gate.py',str(p/'decoded/smali/com/oplus/wallpapers/rely/utils/m$z.smali')])
- run(['java','-jar','bin/apktool/apktool.jar','b','-f',str(p/'decoded'),'-o',str(p/'patched.apk')])
+ run(['java','-jar','bin/apktool/apktool.jar','b','-f','--copy-original',str(p/'decoded'),'-o',str(p/'patched.apk')])
  with zipfile.ZipFile(p/'Wallpapers.apk') as a,zipfile.ZipFile(p/'patched.apk') as b:
   for name in ('resources.arsc','AndroidManifest.xml'): assert a.read(name)==b.read(name),name
   assert a.read('classes.dex')!=b.read('classes.dex')

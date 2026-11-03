@@ -20,7 +20,7 @@ return v0
   z.write(p/'classes.dex','classes.dex');z.writestr('resources.arsc',b'opaque OEM resources');z.writestr('AndroidManifest.xml',b'opaque binary manifest')
  run(['java','-jar','bin/apktool/apktool.jar','d','-f','-r',str(p/'OTA.apk'),'-o',str(p/'decoded')])
  run(['python3','bin/patchmethod_v2.py','-d',str(p/'decoded'),'-k','ro.boot.vbmeta.device_state','locked','-return','false'])
- run(['java','-jar','bin/apktool/apktool.jar','b','-f',str(p/'decoded'),'-o',str(p/'patched.apk')])
+ run(['java','-jar','bin/apktool/apktool.jar','b','-f','--copy-original',str(p/'decoded'),'-o',str(p/'patched.apk')])
  with zipfile.ZipFile(p/'OTA.apk') as a,zipfile.ZipFile(p/'patched.apk') as b:
   for name in ('resources.arsc','AndroidManifest.xml'): assert a.read(name)==b.read(name),name
   assert a.read('classes.dex')!=b.read('classes.dex')

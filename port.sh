@@ -1312,7 +1312,7 @@ if [[ $ota_patched == "false" ]];then
         python3 bin/patchmethod_v2.py -d tmp/OTA -k ro.boot.vbmeta.device_state locked -return false || exit 1
         mkdir -p "build/${app_patch_folder}/patched"
         apk_build tmp/OTA "build/${app_patch_folder}/patched/OTA.apk" \
-            --backend apktool --artifact OTA.apk ${extra_args:-} || exit 1
+            --backend apktool --artifact OTA.apk --copy-original ${extra_args:-} || exit 1
         cp -p -- "build/${app_patch_folder}/patched/OTA.apk" "${targetOTA}" || exit 1
     fi
 fi
@@ -1558,7 +1558,7 @@ if [[ -f "${targetWallpapers}" ]] && [[ ${port_android_version:-0} -ge 16 ]] && 
         python3 bin/patch_inspiration_aod_gate.py "${targetWallpapersGateSmali}" || exit 1
         mkdir -p "build/${app_patch_folder}/patched"
         apk_build tmp/Wallpapers "build/${app_patch_folder}/patched/Wallpapers.apk" \
-            --backend apktool --artifact Wallpapers.apk ${extra_args:-} || exit 1
+            --backend apktool --artifact Wallpapers.apk --copy-original ${extra_args:-} || exit 1
         cp -p -- "build/${app_patch_folder}/patched/Wallpapers.apk" "${targetWallpapers}" || exit 1
     else
         yellow "Wallpapers.apk 未找到可识别的灵感AOD门控，保留原文件" \
