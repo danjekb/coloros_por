@@ -85,7 +85,8 @@ jobs:
           python3 -m unittest discover -s tests -v
           python3 tests/smoke_ota_patch.py
 
-      - name: Download ROMs and run port
+      - name: Download ROMs
+        timeout-minutes: 90
         env:
           BASE_ROM_URL: ${{ inputs.base_rom_url }}
           PORT_ROM_URL: ${{ inputs.port_rom_url }}
@@ -97,10 +98,14 @@ jobs:
           download() {
             python3 bin/oplus_ota_downloader.py --no-resume \
               --connections 4 \
-              --output "$(dirname "$2")" --name "$(basename "$2")" "$1"
+              --output "$(dirname "$2")" --name "$(basename "$2")" "$1" || return $?
             test -s "$2"
             unzip -tq "$2"
           }
+          touch build/download-base.log build/download-port.log
+          tail -n +1 -F build/download-base.log build/download-port.log &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
           # At most two ROMs concurrently (four connections per ROM).
           download "$BASE_ROM_URL" "$PWD/build/ci-inputs/base.zip" > build/download-base.log 2>&1 &
           base_pid=$!
@@ -113,9 +118,19 @@ jobs:
             tail -n 30 build/download-base.log build/download-port.log
             exit 1
           fi
-          args=("$PWD/build/ci-inputs/base.zip" "$PWD/build/ci-inputs/port.zip")
           if [[ -n "$SECOND_PORT_ROM_URL" ]]; then
             download "$SECOND_PORT_ROM_URL" "$PWD/build/ci-inputs/second.zip"
+          fi
+
+      - name: Port ROM
+        timeout-minutes: 240
+        env:
+          SECOND_PORT_ROM_URL: ${{ inputs.second_port_rom_url }}
+          PORT_PARTS: ${{ inputs.port_parts }}
+        run: |
+          set -euo pipefail
+          args=("$PWD/build/ci-inputs/base.zip" "$PWD/build/ci-inputs/port.zip")
+          if [[ -n "$SECOND_PORT_ROM_URL" ]]; then
             args+=("$PWD/build/ci-inputs/second.zip" "${PORT_PARTS//,/ }")
           fi
           bash port.sh "${args[@]}" 2>&1 | tee build/ci-port.log

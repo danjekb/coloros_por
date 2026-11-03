@@ -10,6 +10,8 @@ import os
 import re
 import sys
 import zipfile
+import time
+from threading import Event, Lock, Thread
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, List, Dict
@@ -18,6 +20,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from urllib3.exceptions import HTTPError as StreamHTTPError
 from tqdm import tqdm
 
 USER_AGENT = "okhttp/5.3.2"
@@ -36,6 +39,7 @@ READ_TIMEOUT = 30
 WRITE_TIMEOUT = 30
 
 DEFAULT_CHUNK = 1024 * 1024
+PARALLEL_SEGMENT = 64 * 1024 * 1024
 DEFAULT_FILENAME = "downloadfile"
 
 CD_RFC5987 = re.compile(r"filename\*\s*=\s*(?:[\w-]+'[^']*')?([^;]+)", re.IGNORECASE)
@@ -300,9 +304,26 @@ class OtaDownloader:
         try:
             with open(temporary, "wb") as output:
                 output.truncate(probe.size)
-            block = (probe.size + self.connections - 1) // self.connections
+            # Retry only a small segment, never a multi-gigabyte quarter-ROM.
+            block = min(PARALLEL_SEGMENT, (probe.size + self.connections - 1) // self.connections)
+            progress = {}
+            progress_lock = Lock()
+            stopped = Event()
+            aborted = Event()
+            started = time.monotonic()
+
+            def report():
+                while not stopped.wait(10):
+                    with progress_lock:
+                        received = sum(progress.values())
+                    elapsed = max(time.monotonic() - started, 0.001)
+                    logger.info("Progress: %.1f%% (%d/%d MiB), %.2f MiB/s",
+                                received * 100 / probe.size, received // (1024 * 1024),
+                                probe.size // (1024 * 1024), received / elapsed / (1024 * 1024))
 
             def fetch(start):
+                if aborted.is_set():
+                    raise requests.ConnectionError("Another range failed; aborting download")
                 end = min(probe.size, start + block) - 1
                 headers = self._build_headers(probe.url, {"Range": f"bytes={start}-{end}", "Accept-Encoding": "identity"})
                 if validator:
@@ -310,6 +331,9 @@ class OtaDownloader:
                 with self._build_session(self.proxy, self.retries) as session:
                     for attempt in range(self.retries + 1):
                         try:
+                            segment_started = time.monotonic()
+                            with progress_lock:
+                                progress[start] = 0
                             with session.get(probe.url, headers=headers, stream=True, timeout=self.timeout) as reply:
                                 reply.raise_for_status()
                                 expected = f"bytes {start}-{end}/{probe.size}"
@@ -325,20 +349,40 @@ class OtaDownloader:
                                 with open(temporary, "r+b") as output:
                                     output.seek(start)
                                     for chunk in reply.raw.stream(DEFAULT_CHUNK, decode_content=False):
+                                        if aborted.is_set():
+                                            raise ValueError("Another range failed; aborting download")
                                         if written + len(chunk) > end - start + 1:
                                             raise ValueError("Range response exceeds requested length")
                                         output.write(chunk)
                                         written += len(chunk)
+                                        with progress_lock:
+                                            progress[start] = written
+                                        if time.monotonic() - segment_started > 300:
+                                            raise requests.Timeout("Range exceeded five minutes")
                                 if written != end - start + 1:
                                     raise requests.exceptions.ChunkedEncodingError("Incomplete range")
                                 return
-                        except requests.RequestException as exc:
+                        except ValueError:
+                            aborted.set()
+                            raise
+                        except (requests.RequestException, StreamHTTPError) as exc:
+                            if isinstance(exc, StreamHTTPError):
+                                exc = requests.ConnectionError(str(exc))
                             if attempt == self.retries or not self._is_retryable_exception(exc):
-                                raise
+                                aborted.set()
+                                raise exc
+                            logger.warning("Retrying range %d-%d (%d/%d): %s", start, end,
+                                           attempt + 1, self.retries, type(exc).__name__)
 
             logger.info("Downloading with %d connections", self.connections)
-            with ThreadPoolExecutor(max_workers=self.connections) as pool:
-                list(pool.map(fetch, range(0, probe.size, block)))
+            reporter = Thread(target=report, daemon=True)
+            reporter.start()
+            try:
+                with ThreadPoolExecutor(max_workers=self.connections) as pool:
+                    list(pool.map(fetch, range(0, probe.size, block)))
+            finally:
+                stopped.set()
+                reporter.join()
             os.replace(temporary, filepath)
             return True
         finally:

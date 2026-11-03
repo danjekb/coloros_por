@@ -1,4 +1,5 @@
 import io
+import itertools
 import sys
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bin'))
 from oplus_ota_downloader import OtaDownloader, ProbeResult, SecureSession
 import requests
 from urllib3.response import HTTPResponse
+from urllib3.exceptions import ProtocolError
 
 
 def response(status=200, data=b'abc', headers=None):
@@ -113,7 +115,7 @@ class DownloaderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SecureSession().get_redirect_target(r)
 
-    def test_parallel_ranges(self, encoding=None):
+    def test_parallel_ranges(self, encoding=None, interrupt=False):
         data = b'abcdefghijk'
         self.probe.size = len(data)
         seen = []
@@ -123,7 +125,13 @@ class DownloaderTests(unittest.TestCase):
             headers = {'Content-Range': f'bytes {start}-{end}/{len(data)}'}
             if encoding is not None:
                 headers['Content-Encoding'] = encoding
-            return response(206, data[start:end+1], headers)
+            reply = response(206, data[start:end+1], headers)
+            if interrupt and start == 0 and end > 0 and seen.count((start, end)) == 1:
+                def broken_stream(*args, **kwargs):
+                    yield data[start:start+1]
+                    raise ProtocolError('connection interrupted')
+                reply.raw.stream = broken_stream
+            return reply
         session = Mock()
         session.__enter__ = Mock(return_value=session)
         session.__exit__ = Mock(return_value=False)
@@ -131,7 +139,7 @@ class DownloaderTests(unittest.TestCase):
         with patch.object(self.dl.session, 'get', side_effect=get), patch.object(self.dl, '_build_session', return_value=session):
             self.assertTrue(self.dl._parallel_download(self.probe, str(self.path)))
         self.assertEqual(self.path.read_bytes(), data)
-        self.assertEqual(len(seen), 5)
+        self.assertEqual(len(seen), 6 if interrupt else 5)
         self.assertFalse(Path(str(self.path) + '.part').exists())
 
     def test_parallel_cdn_charset_is_not_content_compression(self):
@@ -142,6 +150,22 @@ class DownloaderTests(unittest.TestCase):
     def test_parallel_real_compression_rejected(self):
         with self.assertRaisesRegex(ValueError, 'Encoded range'):
             self.test_parallel_ranges('gzip')
+
+    def test_parallel_stream_disconnect_retries_only_segment(self):
+        self.dl.retries = 1
+        self.test_parallel_ranges(interrupt=True)
+
+    def test_parallel_segment_size_is_bounded(self):
+        self.dl.connections = 1
+        with patch('oplus_ota_downloader.PARALLEL_SEGMENT', 3):
+            self.test_parallel_ranges()
+
+    def test_slow_segment_times_out_and_removes_partial_file(self):
+        self.dl.connections = 1
+        with patch('oplus_ota_downloader.time.monotonic', side_effect=itertools.count(0, 301)):
+            with self.assertRaises(requests.Timeout):
+                self.test_parallel_ranges()
+        self.assertFalse(Path(str(self.path) + '.part').exists())
 
     def test_parallel_no_range_falls_back(self):
         with patch.object(self.dl.session, 'get', return_value=response()):
