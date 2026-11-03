@@ -48,6 +48,30 @@ port_download_rom() {
     [[ -s "${destination}" && ! -e "${destination}.aria2" ]]
 }
 
+port_apply_bluetooth_display_overrides() {
+    local images="$1"
+    local prop_file="${images}/vendor/build.prop"
+    local feature_file="${images}/my_product/etc/permissions/oplus.product.feature_multimedia_unique.xml"
+    [[ -f "${prop_file}" ]] || return 1
+    # Match the complete property key and replace all active definitions with
+    # one value. Preserve the file's existing permissions and ownership.
+    python3 - "${prop_file}" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+key = 'bluetooth.profile.bap.broadcast.source.enabled'
+lines = path.read_text().splitlines()
+lines = [line for line in lines if line.split('=', 1)[0].strip() != key]
+path.write_text('\n'.join(lines + [key + '=false']) + '\n')
+PY
+    [[ $? -eq 0 ]] || return 1
+    if [[ -f "${feature_file}" ]]; then
+        # Delete only this named XML element, including multiline entries.
+        xmlstarlet ed -L -d "//*[@name='oplus.software.display.dcbacklight_support']" \
+            "${feature_file}" || return 1
+    fi
+}
+
 # Define color output function
 error() {
     [[ -n "${PORT_LOG_FILE:-}" ]] && printf '[%s] [ERR] %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$*" >> "${PORT_LOG_FILE}" 2>/dev/null
