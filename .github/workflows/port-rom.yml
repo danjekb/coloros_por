@@ -84,6 +84,7 @@ jobs:
           java -version
           python3 -m unittest discover -s tests -v
           python3 tests/smoke_ota_patch.py
+          python3 tests/smoke_wallpapers_patch.py
 
       - name: Download ROMs
         timeout-minutes: 90
@@ -95,10 +96,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build/ci-inputs
+          source functions.sh
           download() {
-            python3 bin/oplus_ota_downloader.py --no-resume \
-              --connections 4 \
-              --output "$(dirname "$2")" --name "$(basename "$2")" "$1" || return $?
+            port_download_rom "$1" "$2" || return $?
             test -s "$2"
             unzip -tq "$2"
           }

@@ -146,9 +146,8 @@ port_resolve_input() {
             return 1
         }
         downloaded_path="${PORT_ROOT}/${downloaded_name}"
-        if [[ ! -s "${downloaded_path}" ]]; then
-            python3 "${PORT_ROOT}/bin/oplus_ota_downloader.py" \
-                --output "${PORT_ROOT}" --name "${downloaded_name}" "${value}" || {
+        if [[ ! -s "${downloaded_path}" || -e "${downloaded_path}.aria2" ]]; then
+            port_download_rom "${value}" "${downloaded_path}" || {
                 error "下载错误" "Download error"
                 return 1
             }
@@ -1520,12 +1519,16 @@ targetWallpapers=$(find build/portrom/images/ -type f -name "Wallpapers.apk" -pr
 if [[ -f "${targetWallpapers}" ]] && [[ ${port_android_version:-0} -ge 16 ]] && \
    grep -aFq 'oplus_keyguard_workshop_aod_support' "${targetWallpapers}"; then
     cp -p -- "${targetWallpapers}" "tmp/$(basename "${targetWallpapers}").bak" || exit 1
-    apk_decode "${targetWallpapers}" tmp/Wallpapers --artifact Wallpapers.apk ${extra_args:-} || exit 1
+    # This patch changes only dex; preserve OEM resources and binary manifest.
+    apk_decode "${targetWallpapers}" tmp/Wallpapers --backend apktool --artifact Wallpapers.apk -r ${extra_args:-} || exit 1
     targetWallpapersGateSmali=$(find tmp/Wallpapers -type f -path '*/com/oplus/wallpapers/rely/utils/m$z.smali' -print -quit)
     if [[ -n "${targetWallpapersGateSmali}" ]] && \
        grep -qF 'oplus_keyguard_workshop_aod_support' "${targetWallpapersGateSmali}"; then
         python3 bin/patch_inspiration_aod_gate.py "${targetWallpapersGateSmali}" || exit 1
-        apk_build tmp/Wallpapers "${targetWallpapers}" --artifact Wallpapers.apk ${extra_args:-} || exit 1
+        mkdir -p "build/${app_patch_folder}/patched"
+        apk_build tmp/Wallpapers "build/${app_patch_folder}/patched/Wallpapers.apk" \
+            --backend apktool --artifact Wallpapers.apk ${extra_args:-} || exit 1
+        cp -p -- "build/${app_patch_folder}/patched/Wallpapers.apk" "${targetWallpapers}" || exit 1
     else
         yellow "Wallpapers.apk 未找到可识别的灵感AOD门控，保留原文件" \
             "Wallpapers.apk has no recognizable inspiration-AOD gate; keeping its original logic"

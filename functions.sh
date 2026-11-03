@@ -31,6 +31,23 @@ _port::lower() {
     printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
 }
 
+# Shared by port.sh and Actions. aria2 handles redirects, ranged downloads,
+# continuation and low-speed timeouts; OPlus headers also work for plain URLs.
+port_download_rom() {
+    local url="$1" destination="$2"
+    mkdir -p -- "$(dirname -- "${destination}")" || return 1
+    aria2c --continue=true --auto-file-renaming=false --allow-overwrite=true \
+        --file-allocation=none --split=4 --max-connection-per-server=4 \
+        --min-split-size=16M --connect-timeout=15 --timeout=30 \
+        --lowest-speed-limit=64K --max-tries=5 --retry-wait=5 \
+        --summary-interval=10 --console-log-level=notice --download-result=full \
+        --check-certificate=true --http-accept-gzip=false \
+        --user-agent='okhttp/5.3.2' --header='userId: oplus-ota|16000020' \
+        --dir="$(dirname -- "${destination}")" --out="$(basename -- "${destination}")" \
+        -- "${url}" || return $?
+    [[ -s "${destination}" && ! -e "${destination}.aria2" ]]
+}
+
 # Define color output function
 error() {
     [[ -n "${PORT_LOG_FILE:-}" ]] && printf '[%s] [ERR] %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$*" >> "${PORT_LOG_FILE}" 2>/dev/null
