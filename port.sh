@@ -688,6 +688,20 @@ if [[ "${_port_extract_failed}" -ne 0 ]]; then
 fi
 rm -rf config
 
+python3 bin/debloat_rom.py build/portrom/images || exit 1
+
+# Actions uses a fresh checkout: discard duplicate extraction caches once all
+# input images are unpacked. Local runs keep their reusable caches by default.
+if [[ "${PORT_LOW_DISK:-false}" == true ]]; then
+    rm -rf -- build/cache/roms build/ci-inputs
+    for cache_name in "${version_name}" "${version_name2:-}"; do
+        [[ -n "${cache_name}" && "${cache_name}" != */* && "${cache_name}" != .* ]] || continue
+        [[ -d "build/${cache_name}" ]] || continue
+        find "build/${cache_name}" -maxdepth 1 -type f -name '*.img' -delete
+    done
+    df -h .
+fi
+
 blue "正在获取ROM参数" "Fetching ROM build prop."
 
 # Detect tablet mode before changing the port properties.  A base/port
@@ -2226,7 +2240,10 @@ else
     base_oplus_camera_dir=$(find build/baserom/images/my_product -type d -name "OplusCamera")
     port_oplus_camera_dir=$(find build/portrom/images/my_product -type d -name "OplusCamera")
 
-    if [[ -d "${base_oplus_camera_dir}" ]] && [[ -d "${port_oplus_camera_dir}" ]];then
+    if [[ -d "${base_oplus_camera_dir}" ]];then
+        # Debloat removes the donor camera; restore the device's base camera.
+        port_oplus_camera_dir="build/portrom/images/my_product/app/OplusCamera"
+        mkdir -p "${port_oplus_camera_dir}" build/portrom/images/my_product/product_overlay/framework
         rm -rf "$port_oplus_camera_dir"/* 
         cp -rf "$base_oplus_camera_dir"/* "$port_oplus_camera_dir"/
         cp -rf build/baserom/images/my_product/product_overlay/framework/* build/portrom/images/my_product/product_overlay/framework/
@@ -3222,10 +3239,17 @@ if [[ $pack_method == "stock" ]];then
         fi
     done
     target_folder=${rom_version#*_}
-    pushd otatools
+    if [[ "${PORT_LOW_DISK:-false}" == true ]]; then
+        # All target-files metadata and images have been staged. OTA generation
+        # needs them, not the uncompressed patch/extraction working trees.
+        rm -rf -- tmp build/baserom build/portrom
+        mkdir -p tmp
+        df -h .
+    fi
+    pushd otatools || exit 1
     export PATH=$(pwd)/bin/:$PATH
     mkdir -p ${work_dir}/out/$target_folder
-    ./bin/ota_from_target_files --partial= --force_minor_version 9 ${work_dir}/out/target/product/${base_product_device}/ ${work_dir}/out/${base_product_device}-ota_full-${port_rom_version}-user-${port_android_version}.0.zip
+    ./bin/ota_from_target_files --partial= --force_minor_version 9 "${work_dir}/out/target/product/${base_product_device}/" "${work_dir}/out/${base_product_device}-ota_full-${port_rom_version}-user-${port_android_version}.0.zip" || exit 1
     popd
     ziphash="$(port_sha256_file "out/${base_product_device}-ota_full-${port_rom_version}-user-${port_android_version}.0.zip")" || exit 1
     ziphash="${ziphash:0:10}"

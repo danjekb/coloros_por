@@ -125,6 +125,7 @@ jobs:
       - name: Port ROM
         timeout-minutes: 240
         env:
+          PORT_LOW_DISK: 'true'
           SECOND_PORT_ROM_URL: ${{ inputs.second_port_rom_url }}
           PORT_PARTS: ${{ inputs.port_parts }}
         run: |
