@@ -40,6 +40,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Pixeldrain configuration
+        env:
+          PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+        run: |
+          if [[ -z "$PIXELDRAIN_API_KEY" ]]; then
+            echo '::error::Add PIXELDRAIN_API_KEY in repository Settings > Secrets and variables > Actions.'
+            exit 1
+          fi
+
       - name: Validate inputs and runner
         env:
           BASE_ROM_URL: ${{ inputs.base_rom_url }}
@@ -139,37 +148,33 @@ jobs:
       - name: Collect completed packages
         run: |
           set -euo pipefail
-          mkdir -p build/ci-artifacts
+          mkdir -p build/ci-uploads
           while IFS= read -r -d '' package; do
             unzip -tq "$package"
-            cp -- "$package" build/ci-artifacts/
+            ln -- "$package" build/ci-uploads/
           done < <(find out -maxdepth 2 -type f -name '*.zip' -print0)
           shopt -s nullglob
-          packages=(build/ci-artifacts/*.zip)
+          packages=(build/ci-uploads/*.zip)
           if (( ${#packages[@]} == 0 )); then
             echo '::error::port.sh did not produce a ROM ZIP'
             exit 1
           fi
-          cd build/ci-artifacts
+          cd build/ci-uploads
           sha256sum -- *.zip > SHA256SUMS
 
-      - name: Upload firmware
-        uses: actions/upload-artifact@v4
-        with:
-          name: ported-rom-${{ github.run_id }}-${{ github.run_attempt }}
-          path: build/ci-artifacts/
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 3
+      - name: Upload firmware to Pixeldrain
+        timeout-minutes: 60
+        env:
+          PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+        run: |
+          python3 bin/upload_pixeldrain.py build/ci-uploads/*.zip build/ci-uploads/SHA256SUMS
 
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: port-logs-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            build/ci-port.log
-            build/port.log
-            build/download-*.log
-          if-no-files-found: warn
-          retention-days: 3
+      - name: Show failure logs
+        if: failure()
+        run: |
+          for log in build/ci-port.log build/port.log build/download-*.log; do
+            if [[ -f "$log" ]]; then
+              echo "Log: $log"
+              tail -n 80 -- "$log"
+            fi
+          done

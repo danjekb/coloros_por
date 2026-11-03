@@ -45,8 +45,9 @@ Use base and port packages that you are authorized to obtain. Back up important 
 ## GitHub Actions
 
 Use **Actions → Port ROM → Run workflow** to provide direct HTTPS URLs of full
-base and donor ROM ZIPs. The workflow uploads completed packages and build logs
-as artifacts. See the [workflow guide](docs/GITHUB_ACTIONS.md) (Russian) for
+base and donor ROM ZIPs. Set the `PIXELDRAIN_API_KEY` Actions secret first.
+Completed packages are uploaded to Pixeldrain, with links in the run summary;
+GitHub artifact uploads are disabled. See the [workflow guide](docs/GITHUB_ACTIONS.md) (Russian) for
 runner requirements, optional second donor inputs, and limitations.
 
 ## Contributing
