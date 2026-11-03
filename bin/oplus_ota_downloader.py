@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, List, Dict
 from urllib.parse import urlparse, parse_qs, unquote
@@ -81,11 +82,14 @@ class OtaDownloader:
         retries: int = 3,
         output_dir: str = ".",
         verbose: bool = False,
+        connections: int = 4,
     ) -> None:
         self.output_dir = output_dir
         self.timeout = (CONNECT_TIMEOUT, timeout)
         self.retries = max(0, int(retries))
         self.verbose = verbose
+        self.connections = max(1, min(8, int(connections)))
+        self.proxy = proxy
         self.session = self._build_session(proxy, self.retries)
         os.makedirs(output_dir, exist_ok=True)
 
@@ -253,6 +257,13 @@ class OtaDownloader:
                 resume_offset = 0
 
         attempt = 0
+        if self.connections > 1 and probe.size and probe.size >= 32 * 1024 * 1024 and resume_offset == 0:
+            try:
+                if self._parallel_download(probe, filepath):
+                    return self._maybe_verify(filepath, probe.md5)
+            except (requests.RequestException, OSError, ValueError) as exc:
+                logger.error("Parallel download failed (%s): %s", type(exc).__name__, exc)
+                return False
         while True:
             attempt += 1
             try:
@@ -268,6 +279,67 @@ class OtaDownloader:
                 resume_offset = os.path.getsize(filepath) if resume and os.path.exists(filepath) else 0
 
         return self._maybe_verify(filepath, probe.md5)
+
+    def _parallel_download(self, probe: ProbeResult, filepath: str) -> bool:
+        """Stream disjoint ranges into a temporary file; publish only on success."""
+        with self.session.get(
+            probe.url, headers=self._build_headers(probe.url, {"Range": "bytes=0-0", "Accept-Encoding": "identity"}),
+            stream=True, timeout=self.timeout,
+        ) as reply:
+            if reply.status_code == 200:
+                logger.info("Server ignores Range; using sequential download")
+                return False
+            reply.raise_for_status()
+            if reply.status_code != 206 or reply.headers.get("Content-Range") != f"bytes 0-0/{probe.size}":
+                raise ValueError("Invalid range capability response")
+            validator = reply.headers.get("ETag") or reply.headers.get("Last-Modified")
+            if validator and validator.startswith('W/'):
+                validator = None
+
+        temporary = filepath + ".part"
+        try:
+            with open(temporary, "wb") as output:
+                output.truncate(probe.size)
+            block = (probe.size + self.connections - 1) // self.connections
+
+            def fetch(start):
+                end = min(probe.size, start + block) - 1
+                headers = self._build_headers(probe.url, {"Range": f"bytes={start}-{end}", "Accept-Encoding": "identity"})
+                if validator:
+                    headers["If-Range"] = validator
+                with self._build_session(self.proxy, self.retries) as session:
+                    for attempt in range(self.retries + 1):
+                        try:
+                            with session.get(probe.url, headers=headers, stream=True, timeout=self.timeout) as reply:
+                                reply.raise_for_status()
+                                expected = f"bytes {start}-{end}/{probe.size}"
+                                if reply.status_code != 206 or reply.headers.get("Content-Range") != expected:
+                                    raise ValueError("Server returned an incorrect range or changed file")
+                                if reply.headers.get('Content-Encoding', 'identity') != 'identity':
+                                    raise ValueError("Encoded range response is not supported")
+                                written = 0
+                                with open(temporary, "r+b") as output:
+                                    output.seek(start)
+                                    for chunk in reply.iter_content(DEFAULT_CHUNK):
+                                        if written + len(chunk) > end - start + 1:
+                                            raise ValueError("Range response exceeds requested length")
+                                        output.write(chunk)
+                                        written += len(chunk)
+                                if written != end - start + 1:
+                                    raise requests.exceptions.ChunkedEncodingError("Incomplete range")
+                                return
+                        except requests.RequestException as exc:
+                            if attempt == self.retries or not self._is_retryable_exception(exc):
+                                raise
+
+            logger.info("Downloading with %d connections", self.connections)
+            with ThreadPoolExecutor(max_workers=self.connections) as pool:
+                list(pool.map(fetch, range(0, probe.size, block)))
+            os.replace(temporary, filepath)
+            return True
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
 
     def _do_download_attempt(
         self,
@@ -498,6 +570,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=READ_TIMEOUT,
                    help=f"Read timeout in seconds (default: {READ_TIMEOUT})")
     p.add_argument("--retries", type=int, default=3, help="Max retries (default: 3)")
+    p.add_argument("--connections", type=int, choices=range(1, 9), default=4,
+                   help="Parallel range connections for files >=32 MiB (default: 4; 1 disables)")
     p.add_argument("--batch", help="Read URLs from file (one per line)")
     p.add_argument("--metadata", action="store_true",
                    help="Fetch and display OTA metadata from ZIP")
@@ -530,6 +604,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         retries=args.retries,
         output_dir=args.output,
         verbose=args.verbose,
+        connections=args.connections,
     )
 
     ok_count = 0

@@ -83,6 +83,7 @@ jobs:
           bash -n port.sh functions.sh
           java -version
           python3 -m unittest discover -s tests -v
+          python3 tests/smoke_ota_patch.py
 
       - name: Download ROMs and run port
         env:
@@ -95,12 +96,23 @@ jobs:
           mkdir -p build/ci-inputs
           download() {
             python3 bin/oplus_ota_downloader.py --no-resume \
+              --connections 4 \
               --output "$(dirname "$2")" --name "$(basename "$2")" "$1"
             test -s "$2"
             unzip -tq "$2"
           }
-          download "$BASE_ROM_URL" "$PWD/build/ci-inputs/base.zip"
-          download "$PORT_ROM_URL" "$PWD/build/ci-inputs/port.zip"
+          # At most two ROMs concurrently (four connections per ROM).
+          download "$BASE_ROM_URL" "$PWD/build/ci-inputs/base.zip" > build/download-base.log 2>&1 &
+          base_pid=$!
+          download "$PORT_ROM_URL" "$PWD/build/ci-inputs/port.zip" > build/download-port.log 2>&1 &
+          port_pid=$!
+          failed=0
+          wait "$base_pid" || failed=1
+          wait "$port_pid" || failed=1
+          if (( failed )); then
+            tail -n 30 build/download-base.log build/download-port.log
+            exit 1
+          fi
           args=("$PWD/build/ci-inputs/base.zip" "$PWD/build/ci-inputs/port.zip")
           if [[ -n "$SECOND_PORT_ROM_URL" ]]; then
             download "$SECOND_PORT_ROM_URL" "$PWD/build/ci-inputs/second.zip"
@@ -142,5 +154,6 @@ jobs:
           path: |
             build/ci-port.log
             build/port.log
+            build/download-*.log
           if-no-files-found: warn
           retention-days: 3

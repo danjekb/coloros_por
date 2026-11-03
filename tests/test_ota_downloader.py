@@ -112,6 +112,42 @@ class DownloaderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SecureSession().get_redirect_target(r)
 
+    def test_parallel_ranges(self):
+        data = b'abcdefghijk'
+        self.probe.size = len(data)
+        seen = []
+        def get(url, headers, **kwargs):
+            start, end = map(int, headers['Range'].removeprefix('bytes=').split('-'))
+            seen.append((start, end))
+            return response(206, data[start:end+1], {'Content-Range': f'bytes {start}-{end}/{len(data)}'})
+        session = Mock()
+        session.__enter__ = Mock(return_value=session)
+        session.__exit__ = Mock(return_value=False)
+        session.get = get
+        with patch.object(self.dl.session, 'get', side_effect=get), patch.object(self.dl, '_build_session', return_value=session):
+            self.assertTrue(self.dl._parallel_download(self.probe, str(self.path)))
+        self.assertEqual(self.path.read_bytes(), data)
+        self.assertEqual(len(seen), 5)
+        self.assertFalse(Path(str(self.path) + '.part').exists())
+
+    def test_parallel_no_range_falls_back(self):
+        with patch.object(self.dl.session, 'get', return_value=response()):
+            self.assertFalse(self.dl._parallel_download(self.probe, str(self.path)))
+        self.assertFalse(self.path.exists())
+
+    def test_parallel_bad_range_preserves_destination(self):
+        self.path.write_bytes(b'original')
+        capability = response(206, b'a', {'Content-Range': 'bytes 0-0/3'})
+        session = Mock()
+        session.__enter__ = Mock(return_value=session)
+        session.__exit__ = Mock(return_value=False)
+        session.get.side_effect = lambda *a, **k: response(206, b'bad', {'Content-Range': 'bytes 0-2/999'})
+        with patch.object(self.dl.session, 'get', return_value=capability), patch.object(self.dl, '_build_session', return_value=session):
+            with self.assertRaises(ValueError):
+                self.dl._parallel_download(self.probe, str(self.path))
+        self.assertEqual(self.path.read_bytes(), b'original')
+        self.assertFalse(Path(str(self.path) + '.part').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

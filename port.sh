@@ -1276,11 +1276,13 @@ if [[ $ota_patched == "false" ]];then
     elif [[ -f "${targetOTA}" ]]; then
         blue "Removing OTA dm-verity"
         cp -p -- "${targetOTA}" "tmp/$(basename "${targetOTA}").bak" || exit 1
-        apk_decode "${targetOTA}" tmp/OTA --artifact OTA.apk ${extra_args:-} || exit 1
+        # Only dex is changed. Preserve the original binary resources: OEM
+        # styles may not round-trip through apktool/aapt (COS 16.1 OTA.apk).
+        apk_decode "${targetOTA}" tmp/OTA --backend apktool --artifact OTA.apk -r ${extra_args:-} || exit 1
         python3 bin/patchmethod_v2.py -d tmp/OTA -k ro.boot.vbmeta.device_state locked -return false || exit 1
         mkdir -p "build/${app_patch_folder}/patched"
         apk_build tmp/OTA "build/${app_patch_folder}/patched/OTA.apk" \
-            --artifact OTA.apk ${extra_args:-} || exit 1
+            --backend apktool --artifact OTA.apk ${extra_args:-} || exit 1
         cp -p -- "build/${app_patch_folder}/patched/OTA.apk" "${targetOTA}" || exit 1
     fi
 fi
@@ -3269,7 +3271,7 @@ else
 
 
     blue "正在压缩 super.img" "Comprising super.img"
-    zstd build/portrom/images/super.img -o build/portrom/super.zst
+    zstd -T0 build/portrom/images/super.img -o build/portrom/super.zst || exit 1
 
     blue "正在生成刷机脚本" "Generating flashing script"
 
@@ -3410,7 +3412,8 @@ else
 
     find out/${os_type}_${rom_version} |xargs touch
     pushd out/${os_type}_${rom_version}/ >/dev/null || exit
-    zip -r ${os_type}_${rom_version}.zip ./*
+    # Images are already zstd-compressed. Avoid compressing them a second time.
+    zip -0 -r "${os_type}_${rom_version}.zip" ./* || exit 1
     mv ${os_type}_${rom_version}.zip ../
     popd >/dev/null || exit
     pack_timestamp=$(date +"%m%d%H%M")
