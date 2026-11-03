@@ -315,12 +315,16 @@ class OtaDownloader:
                                 expected = f"bytes {start}-{end}/{probe.size}"
                                 if reply.status_code != 206 or reply.headers.get("Content-Range") != expected:
                                     raise ValueError("Server returned an incorrect range or changed file")
-                                if reply.headers.get('Content-Encoding', 'identity') != 'identity':
+                                # Some OPlus CDN nodes incorrectly label raw ZIP
+                                # bytes as UTF-8. This is a charset, not an HTTP
+                                # content coding; keep the original wire bytes.
+                                encoding = reply.headers.get('Content-Encoding', '').strip().lower()
+                                if encoding not in ('', 'identity', 'utf-8', 'utf8'):
                                     raise ValueError("Encoded range response is not supported")
                                 written = 0
                                 with open(temporary, "r+b") as output:
                                     output.seek(start)
-                                    for chunk in reply.iter_content(DEFAULT_CHUNK):
+                                    for chunk in reply.raw.stream(DEFAULT_CHUNK, decode_content=False):
                                         if written + len(chunk) > end - start + 1:
                                             raise ValueError("Range response exceeds requested length")
                                         output.write(chunk)

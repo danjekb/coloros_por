@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bin'))
 from oplus_ota_downloader import OtaDownloader, ProbeResult, SecureSession
 import requests
+from urllib3.response import HTTPResponse
 
 
 def response(status=200, data=b'abc', headers=None):
@@ -16,7 +17,7 @@ def response(status=200, data=b'abc', headers=None):
     r.status_code = status
     r.url = 'https://example.com/rom.zip'
     r.headers.update(headers or {})
-    r.raw = io.BytesIO(data)
+    r.raw = HTTPResponse(body=io.BytesIO(data), preload_content=False)
     return r
 
 
@@ -112,14 +113,17 @@ class DownloaderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SecureSession().get_redirect_target(r)
 
-    def test_parallel_ranges(self):
+    def test_parallel_ranges(self, encoding=None):
         data = b'abcdefghijk'
         self.probe.size = len(data)
         seen = []
         def get(url, headers, **kwargs):
             start, end = map(int, headers['Range'].removeprefix('bytes=').split('-'))
             seen.append((start, end))
-            return response(206, data[start:end+1], {'Content-Range': f'bytes {start}-{end}/{len(data)}'})
+            headers = {'Content-Range': f'bytes {start}-{end}/{len(data)}'}
+            if encoding is not None:
+                headers['Content-Encoding'] = encoding
+            return response(206, data[start:end+1], headers)
         session = Mock()
         session.__enter__ = Mock(return_value=session)
         session.__exit__ = Mock(return_value=False)
@@ -129,6 +133,15 @@ class DownloaderTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), data)
         self.assertEqual(len(seen), 5)
         self.assertFalse(Path(str(self.path) + '.part').exists())
+
+    def test_parallel_cdn_charset_is_not_content_compression(self):
+        for encoding in ('UTF-8', 'utf8', ' identity ', ''):
+            with self.subTest(encoding=encoding):
+                self.test_parallel_ranges(encoding)
+
+    def test_parallel_real_compression_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'Encoded range'):
+            self.test_parallel_ranges('gzip')
 
     def test_parallel_no_range_falls_back(self):
         with patch.object(self.dl.session, 'get', return_value=response()):
