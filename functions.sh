@@ -51,18 +51,22 @@ port_download_rom() {
 port_apply_bluetooth_display_overrides() {
     local images="$1"
     local prop_file="${images}/vendor/build.prop"
+    local bruce_file="${images}/my_product/etc/bruce/build.prop"
     local feature_file="${images}/my_product/etc/permissions/oplus.product.feature_multimedia_unique.xml"
     [[ -f "${prop_file}" ]] || return 1
     # Match the complete property key and replace all active definitions with
     # one value. Preserve the file's existing permissions and ownership.
-    python3 - "${prop_file}" <<'PY'
+    python3 - "${prop_file}" "${bruce_file}" <<'PY'
 from pathlib import Path
 import sys
-path = Path(sys.argv[1])
-key = 'bluetooth.profile.bap.broadcast.source.enabled'
-lines = path.read_text().splitlines()
-lines = [line for line in lines if line.split('=', 1)[0].strip() != key]
-path.write_text('\n'.join(lines + [key + '=false']) + '\n')
+broadcast = 'bluetooth.profile.bap.broadcast.source.enabled'
+unicast = 'bluetooth.profile.bap.unicast.client.enabled'
+for filename, keys in ((sys.argv[1], (broadcast,)), (sys.argv[2], (broadcast, unicast))):
+    path = Path(filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = path.read_text().splitlines() if path.exists() else []
+    lines = [line for line in lines if line.split('=', 1)[0].strip() not in keys]
+    path.write_text('\n'.join(lines + [key + '=false' for key in keys]) + '\n')
 PY
     [[ $? -eq 0 ]] || return 1
     if [[ -f "${feature_file}" ]]; then
