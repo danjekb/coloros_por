@@ -77,6 +77,44 @@ PY
 }
 
 # Define color output function
+port_patch_systemui_night_color() (
+    local images="$1"
+    local apk="${images}/system_ext/priv-app/SystemUI/SystemUI.apk"
+    local signing_key="${PORT_SYSTEMUI_SIGNING_KEY:-otatools/key/testkey.pk8}"
+    local signing_cert="${PORT_SYSTEMUI_SIGNING_CERT:-otatools/key/testkey.x509.pem}"
+    local framework="${images}/system/system/framework/framework-res.apk"
+    local framework_args=()
+    local temp rc
+    [[ -f "${apk}" ]] || { echo 'SystemUI night color: APK absent; skipping'; return 0; }
+    temp=$(mktemp -d "${TMPDIR:-/tmp}/port-systemui-night.XXXXXX") || return 1
+    trap 'rm -rf -- "${temp}"' EXIT
+    [[ -f "${framework}" ]] && framework_args=(-framework "${framework}")
+    # Decode resources only. Avoid another dex disassembly after the earlier
+    # SystemUI patches and use APKEditor for OEM resource compatibility.
+    java -jar bin/apktool/APKEditor.jar d -f -t xml -i "${apk}" -o "${temp}/decoded" "${framework_args[@]}" || return 1
+    if python3 bin/patch_systemui_night_color.py "${temp}/decoded"; then
+        :
+    else
+        rc=$?
+        [[ "${rc}" -eq 3 ]] && return 0
+        return "${rc}"
+    fi
+    [[ -f "${signing_key}" && -f "${signing_cert}" ]] || {
+        echo 'SystemUI signing files missing: set PORT_SYSTEMUI_SIGNING_KEY and PORT_SYSTEMUI_SIGNING_CERT'
+        return 1
+    }
+    java -jar bin/apktool/APKEditor.jar b -f -i "${temp}/decoded" -o "${temp}/unsigned.apk" "${framework_args[@]}" || return 1
+    otatools/bin/zipalign -p -f 4 "${temp}/unsigned.apk" "${temp}/aligned.apk" || return 1
+    otatools/bin/apksigner sign --key "${signing_key}" --cert "${signing_cert}" \
+        --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+        --in "${temp}/aligned.apk" --out "${temp}/signed.apk" || return 1
+    otatools/bin/apksigner verify --verbose "${temp}/signed.apk" || return 1
+    otatools/bin/zipalign -c -p 4 "${temp}/signed.apk" || return 1
+    chmod --reference="${apk}" "${temp}/signed.apk" || return 1
+    cp -p -- "${temp}/signed.apk" "${apk}" || return 1
+    echo 'SystemUI night color patched; APK aligned, signed and verified'
+)
+
 error() {
     [[ -n "${PORT_LOG_FILE:-}" ]] && printf '[%s] [ERR] %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$*" >> "${PORT_LOG_FILE}" 2>/dev/null
     if [ "$#" -eq 2 ]; then
