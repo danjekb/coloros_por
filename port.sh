@@ -1278,44 +1278,9 @@ if [[ -n "${targetAICallAssistant}" ]]; then
 fi
 # patch_smali_with_apktool "HeyTapSpeechAssist.apk" "com/heytap/speechassist/aicall/setting/config/AiCallCommonBean.smali" ".method public final getSupportAiCall()Z/,/.end method" ".method public final getSupportAiCall()Z\n\t.locals 1\n\tconst\/4 v0, 0x1\n\treturn v0\n.end method" "regex"
 
-ota_patched=false
-if [[ $regionmark == "CN" ]]; then
-    if ver_gte "${port_oplusrom_version}" "16.0.5" && \
-       ensure_resource_available devices/common/OTA_CN_16.1.apk; then
-        cp -p devices/common/OTA_CN_16.1.apk \
-            build/portrom/images/system_ext/app/OTA/OTA.apk && ota_patched=true
-    elif ensure_resource_available devices/common/OTA_CN.apk; then
-        cp -p devices/common/OTA_CN.apk \
-            build/portrom/images/system_ext/app/OTA/OTA.apk && ota_patched=true
-    fi
-else
-    if ensure_resource_available devices/common/OTA_IN.apk; then
-        cp -p devices/common/OTA_IN.apk \
-            build/portrom/images/system_ext/app/OTA/OTA.apk && ota_patched=true
-    fi
-fi
-
-
-if [[ $ota_patched == "false" ]];then
-    # Remove OTA dm-verity
-    targetOTA=$(find build/portrom/images/ -type f -name "OTA.apk" -print -quit)
-    if [[ -f build/${app_patch_folder}/patched/OTA.apk ]]; then
-        blue "复制已经处理过的OTA.apk"
-        [[ -n "${targetOTA}" ]] && cp -p -- build/${app_patch_folder}/patched/OTA.apk "${targetOTA}" || exit 1
-    
-    elif [[ -f "${targetOTA}" ]]; then
-        blue "Removing OTA dm-verity"
-        cp -p -- "${targetOTA}" "tmp/$(basename "${targetOTA}").bak" || exit 1
-        # Only dex is changed. Preserve the original binary resources: OEM
-        # styles may not round-trip through apktool/aapt (COS 16.1 OTA.apk).
-        apk_decode "${targetOTA}" tmp/OTA --backend apktool --artifact OTA.apk -r ${extra_args:-} || exit 1
-        python3 bin/patchmethod_v2.py -d tmp/OTA -k ro.boot.vbmeta.device_state locked -return false || exit 1
-        mkdir -p "build/${app_patch_folder}/patched"
-        apk_build tmp/OTA "build/${app_patch_folder}/patched/OTA.apk" \
-            --backend apktool --artifact OTA.apk --copy-original ${extra_args:-} || exit 1
-        cp -p -- "build/${app_patch_folder}/patched/OTA.apk" "${targetOTA}" || exit 1
-    fi
-fi
+# Keep the donor OTA application: no release replacement, cached patched APK,
+# decoding or dm-verity patching is applied here.
+blue "保留移植包原始 OTA.apk" "Keeping the donor OTA.apk unchanged"
 
 
     EXTENDED_MODELS=("PJF110" "PEEM00" "PEDM00" "LE2120" "LE2121" "LE2123" "KB2000" "KB2001" "KB2005" "KB2003" "LE2110" "LE2111" "LE2112" "LE2113" "IN2010" "IN2011" "IN2012" "IN2013" "IN2020" "IN2021" "IN2022" "IN2023")
@@ -1331,7 +1296,7 @@ fi
     if [[ -z "${targetAIUnit}" ]]; then
         yellow "未找到 AIUnit.apk，跳过高端 AI 功能补丁" "AIUnit.apk not found; skipping AI feature patch"
     elif [[ -f build/${app_patch_folder}/patched/AIUnit.apk ]]; then
-            blue "复制已经处理过的OTA.apk"
+            blue "复制已经处理过的AIUnit.apk"
             cp -p -- build/${app_patch_folder}/patched/AIUnit.apk "${targetAIUnit}" || exit 1
         
     elif [[ -f "${targetAIUnit}" ]]; then

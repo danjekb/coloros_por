@@ -98,7 +98,6 @@ Python-загрузчик остаётся отдельным необязате
 python3 bin/oplus_ota_downloader.py --output build/ci-inputs --name base.zip 'https://example.com/base.zip'
 python3 bin/oplus_ota_downloader.py --metadata 'https://example.com/base.zip'
 python3 -m unittest discover -s tests -v
-python3 tests/smoke_ota_patch.py
 python3 tests/smoke_wallpapers_patch.py
 ```
 
@@ -108,7 +107,7 @@ python3 tests/smoke_wallpapers_patch.py
 проверка длины и ZIP не подтверждает подлинность прошивки. При передаче URL
 непосредственно в `port.sh` используется aria2.
 
-При патче `OTA.apk` и `Wallpapers.apk` apktool работает с `--no-res`: меняется dex, а исходные
+При патче `Wallpapers.apk` apktool работает с `--no-res`: меняется dex, а исходные
 бинарные ресурсы и манифест сохраняются. Это устраняет ошибку сборки OEM
 styles.xml (`expected reference but got ...`) и исключает лишнюю обработку
 ресурсов. Smoke-тест проверяет сохранность ресурсов и изменение dex реальными
@@ -118,7 +117,7 @@ apktool/smali. При упаковке fastboot-прошивки zstd испол
 В репозитории закреплён официальный apktool **3.0.3** вместо старого
 2.9.0-SNAPSHOT. Источник и SHA-256 записаны в `bin/apktool/APKTOOL_VERSION.md`;
 Actions проверяет контрольную сумму перед запуском тестов. Для dex-only патчей
-OTA/Wallpapers сборка использует `--copy-original`, сохраняя исходный бинарный
+Wallpapers сборка использует `--copy-original`, сохраняя исходный бинарный
 манифест. Тест `smoke_apktool_resources.py` проверяет установку framework,
 декодирование и пересборку ресурсов с изменением Wi-Fi bool. Проверка на
 полном framework-res.apk конкретной донорской ROM требует нового запуска.
@@ -130,3 +129,7 @@ OTA/Wallpapers сборка использует `--copy-original`, сохран
 или метода завершает сборку явной ошибкой. Автоматическая проверка прогоняет
 тестовый JAR через настоящие APKEditor/smali, но исправление зависания на
 втором экране загрузки необходимо проверить на целевом устройстве.
+
+Патчинг `OTA.apk` отключён: приложение не заменяется файлами OTA_CN/OTA_IN,
+не берётся из кэша патчей и не пересобирается. Это относится только к приложению
+обновления; генерация итогового OTA ZIP через `ota_from_target_files` сохранена.
