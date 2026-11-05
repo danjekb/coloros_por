@@ -97,7 +97,6 @@ jobs:
           python3 tests/smoke_wallpapers_patch.py
           python3 tests/smoke_cos17_engineer.py
           python3 tests/smoke_apktool_resources.py
-          python3 tests/smoke_systemui_night_color.py
 
       - name: Download ROMs
         timeout-minutes: 90

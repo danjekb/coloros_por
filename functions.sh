@@ -77,44 +77,6 @@ PY
 }
 
 # Define color output function
-port_patch_systemui_night_color() (
-    local images="$1"
-    local apk="${images}/system_ext/priv-app/SystemUI/SystemUI.apk"
-    local signing_key="${PORT_SYSTEMUI_SIGNING_KEY:-otatools/key/testkey.pk8}"
-    local signing_cert="${PORT_SYSTEMUI_SIGNING_CERT:-otatools/key/testkey.x509.pem}"
-    local framework="${images}/system/system/framework/framework-res.apk"
-    local framework_args=()
-    local temp rc
-    [[ -f "${apk}" ]] || { echo 'SystemUI night color: APK absent; skipping'; return 0; }
-    temp=$(mktemp -d "${TMPDIR:-/tmp}/port-systemui-night.XXXXXX") || return 1
-    trap 'rm -rf -- "${temp}"' EXIT
-    [[ -f "${framework}" ]] && framework_args=(-framework "${framework}")
-    # Decode resources only. Avoid another dex disassembly after the earlier
-    # SystemUI patches and use APKEditor for OEM resource compatibility.
-    java -jar bin/apktool/APKEditor.jar d -f -t xml -i "${apk}" -o "${temp}/decoded" "${framework_args[@]}" || return 1
-    if python3 bin/patch_systemui_night_color.py "${temp}/decoded"; then
-        :
-    else
-        rc=$?
-        [[ "${rc}" -eq 3 ]] && return 0
-        return "${rc}"
-    fi
-    [[ -f "${signing_key}" && -f "${signing_cert}" ]] || {
-        echo 'SystemUI signing files missing: set PORT_SYSTEMUI_SIGNING_KEY and PORT_SYSTEMUI_SIGNING_CERT'
-        return 1
-    }
-    java -jar bin/apktool/APKEditor.jar b -f -i "${temp}/decoded" -o "${temp}/unsigned.apk" "${framework_args[@]}" || return 1
-    otatools/bin/zipalign -p -f 4 "${temp}/unsigned.apk" "${temp}/aligned.apk" || return 1
-    otatools/bin/apksigner sign --key "${signing_key}" --cert "${signing_cert}" \
-        --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
-        --in "${temp}/aligned.apk" --out "${temp}/signed.apk" || return 1
-    otatools/bin/apksigner verify --verbose "${temp}/signed.apk" || return 1
-    otatools/bin/zipalign -c -p 4 "${temp}/signed.apk" || return 1
-    chmod --reference="${apk}" "${temp}/signed.apk" || return 1
-    cp -p -- "${temp}/signed.apk" "${apk}" || return 1
-    echo 'SystemUI night color patched; APK aligned, signed and verified'
-)
-
 error() {
     [[ -n "${PORT_LOG_FILE:-}" ]] && printf '[%s] [ERR] %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$*" >> "${PORT_LOG_FILE}" 2>/dev/null
     if [ "$#" -eq 2 ]; then
@@ -2787,116 +2749,6 @@ _port::postdata_install_vendor_ueventd_compat() {
         "Added vendor/etc/ueventd.rc -> /vendor/ueventd.rc compatibility bridge"
 }
 
-_port::postdata_replace_audio_effect_center() {
-    local images_root="$1"
-    local backup_root="$2"
-    local source_img=""
-    local source_type=""
-    local extract_root=""
-    local source_dir=""
-    local target_dir="${images_root}/my_product/app/AudioEffectCenter"
-    local candidate
-    local source_file
-    local relative_file
-    local target_file
-    local -a source_candidates=()
-    local gettype_tool="${tools_dir:-bin/Linux/x86_64}/gettype"
-    local erofs_tool="${tools_dir:-bin/Linux/x86_64}/extract.erofs"
-    local imgextractor="${work_dir:-.}/bin/imgextractor/imgextractor.py"
-
-    # stage 30 keeps the unmodified port image in the cache/version directory;
-    # the copy in images/ is also available before stage 50 repacks it.
-    [[ -n "${portrom_cache_dir:-}" ]] && \
-        source_candidates+=("${portrom_cache_dir%/}/my_product.img")
-    [[ -n "${version_name:-}" ]] && \
-        source_candidates+=("build/${version_name}/my_product.img")
-    source_candidates+=("${images_root}/my_product.img")
-    for candidate in "${source_candidates[@]}"; do
-        if [[ -f "${candidate}" ]]; then
-            source_img="${candidate}"
-            break
-        fi
-    done
-    if [[ -z "${source_img}" ]]; then
-        yellow "找不到原始 Android 17 my_product.img，跳过 AudioEffectCenter 修复" \
-            "Original Android 17 my_product.img is unavailable; skipping AudioEffectCenter fix"
-        return 0
-    fi
-    if [[ ! -x "${gettype_tool}" || ! -x "${erofs_tool}" ]]; then
-        error "缺少 EROFS 提取工具，无法恢复 Android 17 AudioEffectCenter" \
-            "EROFS extraction tools are missing; cannot restore Android 17 AudioEffectCenter"
-        return 1
-    fi
-
-    extract_root="$(mktemp -d "${TMPDIR:-/tmp}/a17-audio-effect.XXXXXX")" || return 1
-    source_type="$(${gettype_tool} -i "${source_img}" 2>/dev/null || true)"
-    case "${source_type}" in
-        erofs)
-            if ! "${erofs_tool}" -X /app/AudioEffectCenter -i "${source_img}" \
-                -o "${extract_root}" >/dev/null 2>&1; then
-                rm -rf -- "${extract_root}"
-                error "提取 Android 17 AudioEffectCenter 失败: ${source_img}" \
-                    "Failed to extract Android 17 AudioEffectCenter: ${source_img}"
-                return 1
-            fi
-            ;;
-        ext)
-            if [[ ! -f "${imgextractor}" ]] || ! python3 "${imgextractor}" \
-                "${source_img}" "${extract_root}" >/dev/null 2>&1; then
-                rm -rf -- "${extract_root}"
-                error "提取 ext my_product.img 失败: ${source_img}" \
-                    "Failed to extract ext my_product.img: ${source_img}"
-                return 1
-            fi
-            ;;
-        *)
-            rm -rf -- "${extract_root}"
-            error "无法识别 my_product.img 文件系统: ${source_type:-unknown}" \
-                "Unknown my_product.img filesystem: ${source_type:-unknown}"
-            return 1
-            ;;
-    esac
-
-    source_dir="${extract_root}/my_product/app/AudioEffectCenter"
-    # imgextractor/extract.erofs versions in older tool bundles differ on
-    # whether the partition basename is included in the output root.
-    if [[ ! -d "${source_dir}" && -d "${extract_root}/app/AudioEffectCenter" ]]; then
-        source_dir="${extract_root}/app/AudioEffectCenter"
-    fi
-    if [[ ! -f "${source_dir}/AudioEffectCenter.apk" ]]; then
-        rm -rf -- "${extract_root}"
-        yellow "Android 17 my_product 未提供 AudioEffectCenter，保留移植包当前版本" \
-            "Android 17 my_product has no AudioEffectCenter; keeping the port version"
-        return 0
-    fi
-
-    # Preserve every old file before replacing the directory, including stale
-    # odex/vdex files that could otherwise be paired with the wrong APK.
-    if [[ -d "${target_dir}" ]]; then
-        while IFS= read -r -d '' source_file; do
-            relative_file="${source_file#${target_dir}/}"
-            _port::postdata_backup_once "${source_file}" \
-                "${backup_root}/originals/my_product/app/AudioEffectCenter/${relative_file}" || {
-                rm -rf -- "${extract_root}"
-                return 1
-            }
-        done < <(find "${target_dir}" -type f -print0)
-    fi
-    rm -rf -- "${target_dir}" || { rm -rf -- "${extract_root}"; return 1; }
-    mkdir -p "$(dirname "${target_dir}")" || { rm -rf -- "${extract_root}"; return 1; }
-    cp -a -- "${source_dir}" "${target_dir}" || { rm -rf -- "${extract_root}"; return 1; }
-    target_file="${target_dir}/AudioEffectCenter.apk"
-    if ! cmp -s "${source_dir}/AudioEffectCenter.apk" "${target_file}"; then
-        rm -rf -- "${extract_root}"
-        error "AudioEffectCenter APK 替换后校验失败" \
-            "AudioEffectCenter APK failed verification after replacement"
-        return 1
-    fi
-    rm -rf -- "${extract_root}"
-    green "已恢复 Android 17 AudioEffectCenter APK/vdex（来源 ${source_img}）" \
-        "Restored Android 17 AudioEffectCenter APK/vdex from ${source_img}"
-}
-
 _port::postdata_map_dir() {
     local root="$1"
     local partition="$2"
@@ -3111,7 +2963,7 @@ _port::stage_postdata_compat() {
     export PORT_POSTDATA_AAPT2
     mkdir -p "${backup_root}/originals" || return 1
 
-    # The mapping, VINTF, seccomp, SELinux, NFC, and AudioEffectCenter changes
+    # The mapping, VINTF, seccomp, SELinux, and NFC changes
     # are Android-17-only.  Android 16 needs only the isolated Wi-Fi RRO
     # compatibility flag below, so it keeps its original vendor/framework
     # compatibility surface.
@@ -3126,7 +2978,6 @@ _port::stage_postdata_compat() {
         _port::postdata_patch_nfc_defaults "${images_root}" "${backup_root}" || return 1
         _port::postdata_install_vendor_ueventd_compat "${images_root}" "${backup_root}" || return 1
         _port::postdata_patch_selinux_contexts "${images_root}" "${backup_root}" || return 1
-        _port::postdata_replace_audio_effect_center "${images_root}" "${backup_root}" || return 1
 
         # Modify the qspm policy only when the target file exists; its absence
         # means this vendor has no such policy file.

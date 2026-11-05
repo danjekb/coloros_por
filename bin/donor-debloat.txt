@@ -1,6 +1,7 @@
 # Donor-only removal before device/base replacements. Paths relative to images/.
 my_product/del-app
 my_product/app/OplusCamera
+my_product/app/AudioEffectCenter
 my_product/app/BaiduInput
 my_product/product_overlay
 my_product/overlay/SystemUiFingerprintRes*

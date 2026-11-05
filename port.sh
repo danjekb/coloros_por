@@ -2986,10 +2986,8 @@ else
 fi
 
 green "Super大小为${superSize}" "Super image size: ${superSize}"
-port_patch_systemui_night_color "${work_dir}/build/portrom/images" || {
-    error "SystemUI 夜间颜色修复失败" "SystemUI night color patch failed"
-    exit 1
-}
+# Device overlays may reintroduce this app after donor debloat.
+rm -rf -- "${work_dir}/build/portrom/images/my_product/app/AudioEffectCenter" || exit 1
 port_apply_bluetooth_display_overrides "${work_dir}/build/portrom/images" || {
     error "蓝牙/显示属性更新失败" "Failed to apply Bluetooth/display overrides"
     exit 1
