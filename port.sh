@@ -1747,14 +1747,7 @@ rm -rf build/portrom/images/my_product/etc/fusionlight_profile/*
 cp -rf build/baserom/images/my_product/etc/fusionlight_profile/*  build/portrom/images/my_product/etc/fusionlight_profile/
 # Fix game audio issue on 15.0.2 (13t)
 
-
 sed -i "/persist.vendor.display.pxlw.iris_feature=.*/d" build/portrom/images/my_product/etc/bruce/build.prop
-
-if grep -q "ro.build.version.oplusrom.display" build/portrom/images/my_manifest/build.prop;then
-    sed -i '/^ro.build.version.oplusrom.display=/ s/$/ | Ported By 🅱🆃/' build/portrom/images/my_manifest/build.prop
-else
-    sed -i '/^ro.build.version.oplusrom.display=/ s/$/ | Ported By 🅱🆃/' build/portrom/images/my_product/etc/bruce/build.prop
-fi
 
 if [[ $portIsRealmeUI == true ]]; then
     case $port_android_version in
