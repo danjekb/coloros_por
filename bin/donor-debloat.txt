@@ -1,4 +1,9 @@
 # Donor-only removal before device/base replacements. Paths relative to images/.
+my_preload/del-app
+my_stock/priv-app/OplusGames
+my_stock/app/KekeUserCenterMember
+my_stock/app/OPBreathMode
+my_stock/app/OppoTranslation
 my_product/del-app
 my_product/app/OplusCamera
 my_product/app/AudioEffectCenter
