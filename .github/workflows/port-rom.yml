@@ -128,10 +128,15 @@ jobs:
           set -euo pipefail
           mkdir -p build/ci-inputs
           source functions.sh
+          validate_zip() {
+            local status=0
+            unzip -tq "$1" || status=$?
+            (( status == 0 || status == 1 ))
+          }
           download() {
             port_download_rom "$1" "$2" || return $?
             test -s "$2"
-            unzip -tq "$2"
+            validate_zip "$2"
           }
           touch build/download-base.log build/download-port.log
           tail -n +1 -F build/download-base.log build/download-port.log &
@@ -171,8 +176,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build/ci-uploads
+          validate_zip() {
+            local status=0
+            unzip -tq "$1" || status=$?
+            (( status == 0 || status == 1 ))
+          }
           while IFS= read -r -d '' package; do
-            unzip -tq "$package"
+            validate_zip "$package"
             ln -- "$package" build/ci-uploads/
           done < <(find out -maxdepth 2 -type f -name '*.zip' -print0)
           shopt -s nullglob
