@@ -135,7 +135,7 @@ class ApkProtectionTests(unittest.TestCase):
             pkg_dir = root / "smali" / "com" / "android" / "server" / "pm" / "pkg" / "parsing"
             pkg_dir.mkdir(parents=True)
             parsing_smali = pkg_dir / "ParsingPackageUtils.smali"
-            incomplete = ".class public Lcom/android/server/pm/pkg/parsing/ParsingPackageUtils;\\n.super Ljava/lang/Object;\\n"
+            incomplete = ".class public Lcom/android/server/pm/pkg/parsing/ParsingPackageUtils;\n.super Ljava/lang/Object;\n"
             parsing_smali.write_text(incomplete, encoding="utf-8")
 
             pm_dir = root / "smali" / "com" / "android" / "server" / "pm"
