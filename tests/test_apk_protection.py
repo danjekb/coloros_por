@@ -117,7 +117,7 @@ class ApkProtectionTests(unittest.TestCase):
             self.assertTrue(dex_out.is_file())
             self.assertGreater(dex_out.stat().st_size, 0)
 
-    def test_empty_or_missing_directory_handled_gracefully(self):
+    def test_empty_directory_fails_closed(self):
         with tempfile.TemporaryDirectory() as td:
             empty_dir = Path(td) / "empty"
             empty_dir.mkdir()
@@ -126,8 +126,38 @@ class ApkProtectionTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(res.returncode, 0)
-            self.assertIn("Patched 0 methods", res.stdout)
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("Expected exactly one ParsingPackageUtils.smali", res.stderr)
+
+    def test_missing_required_method_fails_without_partial_writes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            pkg_dir = root / "smali" / "com" / "android" / "server" / "pm" / "pkg" / "parsing"
+            pkg_dir.mkdir(parents=True)
+            parsing_smali = pkg_dir / "ParsingPackageUtils.smali"
+            incomplete = ".class public Lcom/android/server/pm/pkg/parsing/ParsingPackageUtils;\\n.super Ljava/lang/Object;\\n"
+            parsing_smali.write_text(incomplete, encoding="utf-8")
+
+            pm_dir = root / "smali" / "com" / "android" / "server" / "pm"
+            pm_dir.mkdir(parents=True, exist_ok=True)
+            scan_smali = pm_dir / "ScanPackageUtils.smali"
+            scan_smali.write_text(SAMPLE_SCAN_PACKAGE_UTILS, encoding="utf-8")
+            pms_smali = pm_dir / "PackageManagerServiceUtils.smali"
+            pms_smali.write_text(SAMPLE_PMS_UTILS, encoding="utf-8")
+
+            before = {
+                path: path.read_text(encoding="utf-8")
+                for path in (parsing_smali, scan_smali, pms_smali)
+            }
+            res = subprocess.run(
+                ["python3", str(ROOT / "bin" / "patch_apk_protection.py"), str(root)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("getSigningDetails", res.stderr)
+            for path, original in before.items():
+                self.assertEqual(path.read_text(encoding="utf-8"), original)
 
 
 if __name__ == "__main__":
