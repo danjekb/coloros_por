@@ -163,7 +163,11 @@ def main() -> int:
         print(f"Error: {target} is not a directory", file=sys.stderr)
         return 1
 
-    records = patch_apk_protection(target)
+    try:
+        records = patch_apk_protection(target)
+    except PatchError as exc:
+        print(f"[!] APK Protection patch aborted: {exc}", file=sys.stderr)
+        return 1
     total_patched = sum(len(methods) for methods in records.values())
     print(f"[*] APK Protection patch finished. Patched {total_patched} methods across {len(records)} files.")
     return 0
