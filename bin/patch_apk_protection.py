@@ -13,7 +13,6 @@ Based on Apk-Protection-Patch (Mods-Center):
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 import re
 import sys
@@ -152,6 +151,7 @@ def patch_apk_protection(decompiled_dir: Path | str) -> dict[str, list[str]]:
         smali_file.write_text(text, encoding="utf-8")
 
     return records
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Apply APK Protection patch to services.jar smali tree")
