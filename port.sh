@@ -961,6 +961,18 @@ install_property_compat_policy || exit 1
 ensure_android_ext_shared_library || exit 1
 
 old_face_unlock_app=$(find build/baserom/images/my_product -type f -name "OPFaceUnlock.apk" -print -quit)
+
+# APKEditor needs the framework resources matching the port ROM being patched.
+# Resolve one file from the extracted PORTROM tree and pass it to both decode
+# and build operations for framework-dependent JARs.
+framework_res="$(find build/portrom/images/ -type f -name "framework-res.apk" -print -quit 2>/dev/null)"
+framework_args=()
+if [[ -n "${framework_res}" && -f "${framework_res}" ]]; then
+    framework_args=(-framework "${framework_res}")
+    blue "APKEditor framework: ${framework_res}"
+else
+    yellow "未找到移植包 framework-res.apk，APKEditor 将使用内置 framework" "framework-res.apk not found in PORTROM; APKEditor will use its built-in framework"
+fi
 if [[ -f build/${app_patch_folder}/patched/services.jar ]];then
     blue "复制已经处理过的services.jar"
     cp -rfv build/${app_patch_folder}/patched/services.jar build/portrom/images/system/system/framework/services.jar
@@ -971,14 +983,7 @@ elif [[ -f build/portrom/images/system/system/framework/services.jar ]];then
 
     mkdir -p tmp/services/
     cp -rf build/portrom/images/system/system/framework/services.jar tmp/services.jar
-    framework_res=$(find build/portrom/images/ -type f -name "framework-res.apk")
-    extra_args=""
-
-    if [[ -f $framework_res ]];then
-        extra_args="-framework $framework_res"
-    fi
-
-    java -jar bin/apktool/APKEditor.jar d -f -i tmp/services.jar -o tmp/services
+    java -jar bin/apktool/APKEditor.jar d -f -i tmp/services.jar -o tmp/services "${framework_args[@]}"
 
 
     smalis=("ScanPackageUtils")
@@ -1041,7 +1046,7 @@ elif [[ -f build/portrom/images/system/system/framework/services.jar ]];then
     blue "应用 APK Protection 补丁到 services.jar" "Applying APK Protection patch to services.jar"
     python3 bin/patch_apk_protection.py tmp/services || exit 1
 
-    java -jar bin/apktool/APKEditor.jar b -f -i tmp/services -o build/${app_patch_folder}/patched/services.jar 
+    java -jar bin/apktool/APKEditor.jar b -f -i tmp/services -o build/${app_patch_folder}/patched/services.jar "${framework_args[@]}"
     cp -rfv build/${app_patch_folder}/patched/services.jar build/portrom/images/system/system/framework/services.jar
 
 fi
@@ -1087,7 +1092,7 @@ if [[ -f "${oplus_service_cache}" ]]; then
 elif [[ -f "${targetOplusService}" ]]; then
     blue "Removing GSM Restriction"
     cp -p -- "${targetOplusService}" "tmp/$(basename "${targetOplusService}").bak" || exit 1
-    java -jar bin/apktool/APKEditor.jar d -f -i "${targetOplusService}" -o tmp/OplusService || exit 1
+    java -jar bin/apktool/APKEditor.jar d -f -i "${targetOplusService}" -o tmp/OplusService "${framework_args[@]}" || exit 1
     targetSmali=$(find tmp/OplusService -type f -name "OplusBgSceneManager.smali" -print -quit)
     if [[ -n "${targetSmali}" ]]; then
         python3 bin/patchmethod.py "${targetSmali}" "-isGmsRestricted" || exit 1
@@ -1096,7 +1101,7 @@ elif [[ -f "${targetOplusService}" ]]; then
         python3 bin/patch_cos17_engineer.py tmp/OplusService || exit 1
     fi
     mkdir -p "$(dirname "${oplus_service_cache}")"
-    java -jar bin/apktool/APKEditor.jar b -f -i tmp/OplusService -o "${oplus_service_cache}.new.jar" || exit 1
+    java -jar bin/apktool/APKEditor.jar b -f -i tmp/OplusService -o "${oplus_service_cache}.new.jar" "${framework_args[@]}" || exit 1
     unzip -tq "${oplus_service_cache}.new.jar" || exit 1
     mv -f -- "${oplus_service_cache}.new.jar" "${oplus_service_cache}" || exit 1
     cp -p -- "${oplus_service_cache}" "${targetOplusService}" || exit 1
