@@ -36,13 +36,19 @@ _port::lower() {
 port_download_rom() {
     local url="$1" destination="$2"
     mkdir -p -- "$(dirname -- "${destination}")" || return 1
+    # Note: allawnfs CDN returns HTTP 403 when User-Agent is okhttp/* or browser Mozilla/*,
+    # requiring lian86 as recommended by roms.lian86.top FAQ.
+    local ua='okhttp/5.3.2'
+    if [[ "${url}" =~ allawnfs\.com ]]; then
+        ua='lian86'
+    fi
     aria2c --continue=true --auto-file-renaming=false --allow-overwrite=true \
         --file-allocation=none --split=4 --max-connection-per-server=4 \
         --min-split-size=16M --connect-timeout=15 --timeout=30 \
         --lowest-speed-limit=64K --max-tries=5 --retry-wait=5 \
         --summary-interval=10 --console-log-level=notice --download-result=full \
         --check-certificate=true --http-accept-gzip=false \
-        --user-agent='okhttp/5.3.2' --header='userId: oplus-ota|16000020' \
+        --user-agent="${ua}" --header='userId: oplus-ota|16000020' \
         --dir="$(dirname -- "${destination}")" --out="$(basename -- "${destination}")" \
         -- "${url}" || return $?
     [[ -s "${destination}" && ! -e "${destination}.aria2" ]]
