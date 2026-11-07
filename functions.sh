@@ -353,7 +353,9 @@ apk_decode() {
         esac
     done
 
-    backend="$(resolve_backend_for_artifact "${backend}" "${artifact}")"
+    if [[ -z "${backend}" ]]; then
+        backend="$(resolve_backend_for_artifact "${backend}" "${artifact}")"
+    fi
 
     case "${backend}" in
         apktool)
@@ -422,7 +424,9 @@ apk_build() {
         esac
     done
 
-    backend="$(resolve_backend_for_artifact "${backend}" "${artifact}")"
+    if [[ -z "${backend}" ]]; then
+        backend="$(resolve_backend_for_artifact "${backend}" "${artifact}")"
+    fi
 
     case "${backend}" in
         apktool)
@@ -434,6 +438,11 @@ apk_build() {
                         # APKEditor-only option; apktool backend ignores it.
                         ((i+=2))
                         continue
+                        ;;
+                    -c)
+                        # -c is the short alias for --copy-original in older apktool versions
+                        apktool_args+=(--copy-original)
+                        ((i+=1))
                         ;;
                     *)
                         apktool_args+=("${args[i]}")
