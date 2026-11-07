@@ -337,8 +337,7 @@ apk_decode() {
     local input_file="$1"
     local output_dir="$2"
     shift 2
-    local backend
-    backend="$(_port::lower "${APK_BACKEND:-}")"
+    local backend=""
     local artifact=""
     local args=()
 
@@ -360,7 +359,7 @@ apk_decode() {
     done
 
     if [[ -z "${backend}" ]]; then
-        backend="$(resolve_backend_for_artifact "${backend}" "${artifact}")"
+        backend="$(resolve_backend_for_artifact "${APK_BACKEND:-apktool}" "${artifact}")"
     fi
 
     case "${backend}" in
@@ -408,8 +407,7 @@ apk_build() {
     local input_dir="$1"
     local output_file="$2"
     shift 2
-    local backend
-    backend="$(_port::lower "${APK_BACKEND:-}")"
+    local backend=""
     local artifact=""
     local args=()
 
@@ -431,7 +429,7 @@ apk_build() {
     done
 
     if [[ -z "${backend}" ]]; then
-        backend="$(resolve_backend_for_artifact "${backend}" "${artifact}")"
+        backend="$(resolve_backend_for_artifact "${APK_BACKEND:-apktool}" "${artifact}")"
     fi
 
     case "${backend}" in

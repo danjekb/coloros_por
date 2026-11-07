@@ -1432,7 +1432,7 @@ targetOplusLauncher=$(find build/portrom/images/ -type f -name "OplusLauncher.ap
 if [[ -f $targetOplusLauncher ]] && [[ $base_product_first_api_level -gt 34 ]];then
 	blue "解锁运存显示"
 	cp -rf $targetOplusLauncher tmp/$(basename $targetOplusLauncher).bak
-	java -jar bin/apktool/APKEditor.jar d -f -i $targetOplusLauncher -o tmp/OplusLauncher $extra_args
+	apk_decode "${targetOplusLauncher}" tmp/OplusLauncher --artifact OplusLauncher.apk ${extra_args:-} || exit 1
 	targetSmali=$(find tmp/OplusLauncher -type f -path "*/com/oplus/basecommon/util/SystemPropertiesHelper.smali" -print -quit)
     if [[ -n "${targetSmali}" ]]; then
         python3 bin/patchmethod_v2.py "${targetSmali}" getFirstApiLevel ".locals 1\n\tconst/16 v0, 0x22\n\treturn v0" || exit 1
