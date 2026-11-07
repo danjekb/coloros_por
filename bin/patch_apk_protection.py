@@ -83,11 +83,11 @@ class PatchError(RuntimeError):
 
 
 REQUIRED_METHODS = {
-    "ParsingPackageUtils.smali": ("getSigningDetails", GET_SIGNING_DETAILS_REMAKE),
-    "ScanPackageUtils.smali": ("assertMinSignatureSchemeIsValid", RETURN_VOID),
+    "ParsingPackageUtils.smali": (("getSigningDetails", GET_SIGNING_DETAILS_REMAKE),),
+    "ScanPackageUtils.smali": (("assertMinSignatureSchemeIsValid", RETURN_VOID),),
     "PackageManagerServiceUtils.smali": (
-        "matchSignaturesCompat",
-        "matchSignaturesRecover",
+        ("matchSignaturesCompat", RETURN_FALSE),
+        ("matchSignaturesRecover", RETURN_FALSE),
     ),
 }
 
@@ -142,11 +142,7 @@ def patch_apk_protection(decompiled_dir: Path | str) -> dict[str, list[str]]:
     for filename, spec in REQUIRED_METHODS.items():
         smali_file = resolved[filename]
         text = smali_file.read_text(encoding="utf-8", errors="strict")
-        method_names = (spec,) if isinstance(spec, str) else spec
-        for item in method_names:
-            method_name, new_body = item if isinstance(item, tuple) else (item, None)
-            if new_body is None:
-                raise PatchError(f"Internal patch definition missing body for {method_name}")
+        for method_name, new_body in spec:
             text, _ = replace_method(text, method_name, new_body)
             records.setdefault(str(smali_file), []).append(method_name)
             print(f"[+] Validated and patched {method_name} in {smali_file}")
