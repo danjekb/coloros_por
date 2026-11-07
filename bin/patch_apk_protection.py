@@ -78,67 +78,84 @@ RETURN_FALSE = '''    .locals 1
     return v0'''
 
 
-def replace_method(content: str, method_name: str, new_body: str) -> tuple[str, bool]:
-    pattern = re.compile(
-        r"(?P<header>^\s*\.method[^\n\r]*?" + re.escape(method_name) + r"[^\n\r]*)"
-        r"(?P<body>.*?)"
-        r"(?P<footer>^\s*\.end method)",
-        re.DOTALL | re.MULTILINE,
-    )
-    match = pattern.search(content)
-    if not match:
-        return content, False
+class PatchError(RuntimeError):
+    """Raised when the services.jar layout does not match the expected Android code."""
 
-    header = match.group("header")
-    footer = match.group("footer")
-    formatted_body = "\n" + new_body.strip("\n") + "\n"
-    modified_block = f"{header}{formatted_body}{footer}"
-    new_content = content[:match.start()] + modified_block + content[match.end():]
-    return new_content, True
+
+REQUIRED_METHODS = {
+    "ParsingPackageUtils.smali": ("getSigningDetails", GET_SIGNING_DETAILS_REMAKE),
+    "ScanPackageUtils.smali": ("assertMinSignatureSchemeIsValid", RETURN_VOID),
+    "PackageManagerServiceUtils.smali": (
+        "matchSignaturesCompat",
+        "matchSignaturesRecover",
+    ),
+}
+
+
+def replace_method(content: str, method_name: str, new_body: str) -> tuple[str, bool]:
+    """Replace exactly one method whose declaration names method_name."""
+    declaration = re.compile(
+        r"^[ \t]*\.method\b[^\r\n]*\b" + re.escape(method_name) + r"\s*\(",
+        re.MULTILINE,
+    )
+    declarations = list(declaration.finditer(content))
+    if len(declarations) != 1:
+        raise PatchError(
+            f"Expected exactly one declaration for {method_name}, found {len(declarations)}"
+        )
+
+    start = declarations[0].start()
+    end_match = re.search(r"^[ \t]*\.end method[ \t]*$", content[declarations[0].end():], re.MULTILINE)
+    if end_match is None:
+        raise PatchError(f"Method {method_name} has no .end method")
+    end = declarations[0].end() + end_match.end()
+    block = content[start:end]
+    header_end = block.find("\n")
+    if header_end < 0:
+        raise PatchError(f"Malformed declaration for {method_name}")
+    header = block[:header_end]
+    footer = block[block.rfind(".end method"):]
+    return content[:start] + header + "\n" + new_body.strip("\n") + "\n" + footer + content[end:], True
 
 
 def patch_apk_protection(decompiled_dir: Path | str) -> dict[str, list[str]]:
+    """Patch all required methods, failing before writes if the layout is unexpected."""
     root = Path(decompiled_dir)
-    patched_records: dict[str, list[str]] = {}
-
     if not root.is_dir():
-        print(f"[!] Directory not found: {root}")
-        return patched_records
+        raise PatchError(f"Directory not found: {root}")
 
-    # 1. ParsingPackageUtils: getSigningDetails
-    for smali_file in root.rglob("ParsingPackageUtils.smali"):
-        text = smali_file.read_text(encoding="utf-8", errors="ignore")
-        new_text, changed = replace_method(text, "getSigningDetails", GET_SIGNING_DETAILS_REMAKE)
-        if changed:
-            smali_file.write_text(new_text, encoding="utf-8")
-            patched_records.setdefault(str(smali_file), []).append("getSigningDetails")
-            print(f"[+] Patched getSigningDetails in {smali_file}")
+    records: dict[str, list[str]] = {}
+    pending_writes: dict[Path, str] = {}
 
-    # 2. ScanPackageUtils: assertMinSignatureSchemeIsValid
-    for smali_file in root.rglob("ScanPackageUtils.smali"):
-        text = smali_file.read_text(encoding="utf-8", errors="ignore")
-        new_text, changed = replace_method(text, "assertMinSignatureSchemeIsValid", RETURN_VOID)
-        if changed:
-            smali_file.write_text(new_text, encoding="utf-8")
-            patched_records.setdefault(str(smali_file), []).append("assertMinSignatureSchemeIsValid")
-            print(f"[+] Patched assertMinSignatureSchemeIsValid in {smali_file}")
+    # Resolve all required files first. Multiple matches can indicate an ambiguous
+    # multidex/decompilation layout, so do not silently patch an arbitrary copy.
+    resolved: dict[str, Path] = {}
+    for filename in REQUIRED_METHODS:
+        matches = list(root.rglob(filename))
+        if len(matches) != 1:
+            raise PatchError(
+                f"Expected exactly one {filename} under {root}, found {len(matches)}"
+            )
+        resolved[filename] = matches[0]
 
-    # 3. PackageManagerServiceUtils: matchSignaturesCompat, matchSignaturesRecover
-    for smali_file in root.rglob("PackageManagerServiceUtils.smali"):
-        text = smali_file.read_text(encoding="utf-8", errors="ignore")
-        file_changed = False
-        for method_name in ("matchSignaturesCompat", "matchSignaturesRecover"):
-            new_text, changed = replace_method(text, method_name, RETURN_FALSE)
-            if changed:
-                text = new_text
-                file_changed = True
-                patched_records.setdefault(str(smali_file), []).append(method_name)
-                print(f"[+] Patched {method_name} in {smali_file}")
-        if file_changed:
-            smali_file.write_text(text, encoding="utf-8")
+    # Validate and patch in memory. No file is written until every target passes.
+    for filename, spec in REQUIRED_METHODS.items():
+        smali_file = resolved[filename]
+        text = smali_file.read_text(encoding="utf-8", errors="strict")
+        method_names = (spec,) if isinstance(spec, str) else spec
+        for item in method_names:
+            method_name, new_body = item if isinstance(item, tuple) else (item, None)
+            if new_body is None:
+                raise PatchError(f"Internal patch definition missing body for {method_name}")
+            text, _ = replace_method(text, method_name, new_body)
+            records.setdefault(str(smali_file), []).append(method_name)
+            print(f"[+] Validated and patched {method_name} in {smali_file}")
+        pending_writes[smali_file] = text
 
-    return patched_records
+    for smali_file, text in pending_writes.items():
+        smali_file.write_text(text, encoding="utf-8")
 
+    return records
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Apply APK Protection patch to services.jar smali tree")
