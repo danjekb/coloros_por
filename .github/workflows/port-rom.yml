@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       base_rom_url:
-        description: Direct HTTPS URL of the full base ROM
+        description: Direct HTTPS URL or device name/code (e.g. rmx3301/rmx3301) for base ROM
         required: true
         type: string
       port_rom_url:
-        description: Direct HTTPS URL of the full donor ROM
+        description: Direct HTTPS URL or device name/code (e.g. Oneplus 13) for donor ROM
         required: true
         type: string
       second_port_rom_url:
-        description: Optional second donor ROM (requires port_parts)
+        description: Optional second donor ROM direct URL or device name (requires port_parts)
         required: false
         type: string
       port_parts:
@@ -49,25 +49,22 @@ jobs:
             exit 1
           fi
 
-      - name: Validate inputs and runner
+      - name: Validate runner and inputs
         env:
-          BASE_ROM_URL: ${{ inputs.base_rom_url }}
-          PORT_ROM_URL: ${{ inputs.port_rom_url }}
-          SECOND_PORT_ROM_URL: ${{ inputs.second_port_rom_url }}
+          BASE_INPUT: ${{ inputs.base_rom_url }}
+          PORT_INPUT: ${{ inputs.port_rom_url }}
+          SECOND_PORT_INPUT: ${{ inputs.second_port_rom_url }}
           PORT_PARTS: ${{ inputs.port_parts }}
         run: |
           python3 - <<'PY'
           import os, re
-          from urllib.parse import urlsplit
-          for key in ('BASE_ROM_URL', 'PORT_ROM_URL', 'SECOND_PORT_ROM_URL'):
-              value = os.environ[key]
-              if key == 'SECOND_PORT_ROM_URL' and not value:
-                  continue
-              parsed = urlsplit(value)
-              if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or any(c.isspace() for c in value):
-                  raise SystemExit(f'{key}: use a direct HTTPS URL without embedded credentials or whitespace')
-          parts = os.environ['PORT_PARTS']
-          if bool(os.environ['SECOND_PORT_ROM_URL']) != bool(parts):
+          base_input = os.environ['BASE_INPUT'].strip()
+          port_input = os.environ['PORT_INPUT'].strip()
+          if not base_input or not port_input:
+              raise SystemExit('base_rom_url and port_rom_url must not be empty')
+          second_input = os.environ['SECOND_PORT_INPUT'].strip()
+          parts = os.environ['PORT_PARTS'].strip()
+          if bool(second_input) != bool(parts):
               raise SystemExit('Second donor URL and port_parts must be provided together')
           if parts and not re.fullmatch(r'[A-Za-z0-9_]+(?:,[A-Za-z0-9_]+)*', parts):
               raise SystemExit('port_parts must be comma-separated partition names')
@@ -86,7 +83,9 @@ jobs:
           sudo apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             aria2 python3 busybox zip unzip p7zip-full openjdk-21-jre-headless \
-            zstd bc android-sdk-libsparse-utils xmlstarlet dos2unix python3-requests python3-tqdm
+            zstd bc android-sdk-libsparse-utils xmlstarlet dos2unix python3-requests python3-tqdm python3-pip
+          python3 -m pip install playwright --break-system-packages || python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
           echo 'JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64' >> "$GITHUB_ENV"
           echo '/usr/lib/jvm/java-21-openjdk-amd64/bin' >> "$GITHUB_PATH"
           bash -n port.sh functions.sh
@@ -97,13 +96,33 @@ jobs:
           python3 tests/smoke_wallpapers_patch.py
           python3 tests/smoke_cos17_engineer.py
           python3 tests/smoke_apktool_resources.py
+          python3 tests/test_fetch_rom_url.py
+
+      - name: Resolve ROM URLs
+        env:
+          BASE_INPUT: ${{ inputs.base_rom_url }}
+          PORT_INPUT: ${{ inputs.port_rom_url }}
+          SECOND_PORT_INPUT: ${{ inputs.second_port_rom_url }}
+        run: |
+          set -euo pipefail
+          echo "Resolving base ROM..."
+          RESOLVED_BASE_URL=$(python3 bin/fetch_rom_url.py "$BASE_INPUT")
+          echo "Resolving port ROM..."
+          RESOLVED_PORT_URL=$(python3 bin/fetch_rom_url.py "$PORT_INPUT")
+          echo "BASE_ROM_URL=${RESOLVED_BASE_URL}" >> "$GITHUB_ENV"
+          echo "PORT_ROM_URL=${RESOLVED_PORT_URL}" >> "$GITHUB_ENV"
+          if [[ -n "${SECOND_PORT_INPUT:-}" ]]; then
+            echo "Resolving second port ROM..."
+            RESOLVED_SECOND_PORT_URL=$(python3 bin/fetch_rom_url.py "$SECOND_PORT_INPUT")
+            echo "SECOND_PORT_ROM_URL=${RESOLVED_SECOND_PORT_URL}" >> "$GITHUB_ENV"
+          fi
 
       - name: Download ROMs
         timeout-minutes: 90
         env:
-          BASE_ROM_URL: ${{ inputs.base_rom_url }}
-          PORT_ROM_URL: ${{ inputs.port_rom_url }}
-          SECOND_PORT_ROM_URL: ${{ inputs.second_port_rom_url }}
+          BASE_ROM_URL: ${{ env.BASE_ROM_URL }}
+          PORT_ROM_URL: ${{ env.PORT_ROM_URL }}
+          SECOND_PORT_ROM_URL: ${{ env.SECOND_PORT_ROM_URL }}
           PORT_PARTS: ${{ inputs.port_parts }}
         run: |
           set -euo pipefail
@@ -130,7 +149,7 @@ jobs:
             tail -n 30 build/download-base.log build/download-port.log
             exit 1
           fi
-          if [[ -n "$SECOND_PORT_ROM_URL" ]]; then
+          if [[ -n "${SECOND_PORT_ROM_URL:-}" ]]; then
             download "$SECOND_PORT_ROM_URL" "$PWD/build/ci-inputs/second.zip"
           fi
 
@@ -138,12 +157,12 @@ jobs:
         timeout-minutes: 240
         env:
           PORT_LOW_DISK: 'true'
-          SECOND_PORT_ROM_URL: ${{ inputs.second_port_rom_url }}
+          SECOND_PORT_ROM_URL: ${{ env.SECOND_PORT_ROM_URL }}
           PORT_PARTS: ${{ inputs.port_parts }}
         run: |
           set -euo pipefail
           args=("$PWD/build/ci-inputs/base.zip" "$PWD/build/ci-inputs/port.zip")
-          if [[ -n "$SECOND_PORT_ROM_URL" ]]; then
+          if [[ -n "${SECOND_PORT_ROM_URL:-}" ]]; then
             args+=("$PWD/build/ci-inputs/second.zip" "${PORT_PARTS//,/ }")
           fi
           bash port.sh "${args[@]}" 2>&1 | tee build/ci-port.log
