@@ -1448,7 +1448,7 @@ if [[ -f build/${app_patch_folder}/patched/SystemUI.apk ]]; then
 elif [[ -f "$targetSystemUI" ]]; then
     
     cp -rf $targetSystemUI tmp/$(basename $targetSystemUI).bak
-    apk_decode "${targetSystemUI}" tmp/SystemUI --artifact SystemUI.apk ${extra_args:-} || exit 1
+    apk_decode "${targetSystemUI}" tmp/SystemUI --backend apktool --artifact SystemUI.apk -r ${extra_args:-} || exit 1
     blue "解锁全景全屏AOD"
     targetSmoothTransitionControllerSmali=$(find tmp/SystemUI -type f -name "SmoothTransitionController.smali" -print -quit)
     if [[ -n "${targetSmoothTransitionControllerSmali}" ]]; then
@@ -1474,13 +1474,17 @@ elif [[ -f "$targetSystemUI" ]]; then
             python3 bin/patchmethod_v2.py "${targetSmali}" isSupportMyDevice || exit 1
         fi
     fi
-    # tmp workround 
-    for style_xml_file in $(find tmp/SystemUI -name "styles.xml");do 
-        sed -i "s/style\/null/7f1403f6/g" $style_xml_file
-    done
+
+    # Fix keyguard_settings_popup_menu crash by nop'ing addViews in DefaultSettingsPopupMenuSection
+    targetPopupMenuSectionSmali=$(find tmp/SystemUI -type f -name "DefaultSettingsPopupMenuSection.smali" -print -quit)
+    if [[ -n "${targetPopupMenuSectionSmali}" ]]; then
+        blue "修复锁屏设置弹出菜单崩溃 (DefaultSettingsPopupMenuSection.addViews)" "Fix keyguard popup menu crash"
+        python3 bin/patchmethod_v2.py "${targetPopupMenuSectionSmali}" addViews -return void || exit 1
+    fi
+
     mkdir -p "build/${app_patch_folder}/patched"
     apk_build tmp/SystemUI "build/${app_patch_folder}/patched/SystemUI.apk" \
-        --artifact SystemUI.apk ${extra_args:-} || exit 1
+        --backend apktool --artifact SystemUI.apk --copy-original ${extra_args:-} || exit 1
     cp -p -- "build/${app_patch_folder}/patched/SystemUI.apk" "${targetSystemUI}" || exit 1
 fi
 
