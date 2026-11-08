@@ -14,6 +14,22 @@ class FetchRomUrlTests(unittest.TestCase):
         http_url = "http://example.com/base.zip"
         self.assertEqual(fetch_rom_url.fetch_rom_url(http_url), http_url)
 
+    def test_pixeldrain_share_url_normalized(self):
+        self.assertEqual(
+            fetch_rom_url.normalize_direct_url("https://pixeldrain.com/u/AbC_123"),
+            "https://pixeldrain.com/api/file/AbC_123?download=",
+        )
+
+    def test_pixeldrain_api_url_normalized(self):
+        self.assertEqual(
+            fetch_rom_url.normalize_direct_url("https://pixeldrain.com/api/file/AbC123"),
+            "https://pixeldrain.com/api/file/AbC123?download=",
+        )
+
+    def test_invalid_pixeldrain_path_rejected(self):
+        with self.assertRaises(ValueError):
+            fetch_rom_url.normalize_direct_url("https://pixeldrain.com/AbC123")
+
     def test_is_direct_url(self):
         self.assertTrue(fetch_rom_url.is_direct_url("https://gauss.allawnfs.com/ota.zip"))
         self.assertTrue(fetch_rom_url.is_direct_url("http://gauss.allawnfs.com/ota.zip"))
