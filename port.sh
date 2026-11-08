@@ -1051,8 +1051,8 @@ if [[ -f build/${app_patch_folder}/patched/framework.jar ]];then
     cp -rfv build/${app_patch_folder}/patched/framework.jar build/portrom/images/system/system/framework/framework.jar
 else
     cp -rf build/portrom/images/system/system/framework/framework.jar tmp/framework.jar
+    java -jar bin/apktool/APKEditor.jar d -f -i tmp/framework.jar -o tmp/framework -no-dex-debug
     if [[ -f devices/common/0001-core-framework-Introduce-OplusPropsHookUtils-V6.patch ]]; then
-        java -jar bin/apktool/APKEditor.jar d -f -i tmp/framework.jar -o tmp/framework -no-dex-debug
         pushd tmp/framework 
         [[ -d .git ]] && rm -rf .git  
         git init
@@ -1064,11 +1064,11 @@ else
         git apply ${work_dir}/devices/common/0001-core-framework-Introduce-OplusPropsHookUtils-V6.patch && echo "✅ Patch 应用成功" || echo "❌ Patch 应用失败"
 
         popd
-        java -jar bin/apktool/APKEditor.jar b -f -i tmp/framework -o build/${app_patch_folder}/patched/framework.jar 
-        cp -rfv build/${app_patch_folder}/patched/framework.jar build/portrom/images/system/system/framework/framework.jar
-    else
-        echo "⚠️ 0001-core-framework-Introduce-OplusPropsHookUtils-V6.patch不存在，跳过补丁应用"
     fi
+    blue "应用 APK Protection 补丁到 framework.jar" "Applying APK Protection patch to framework.jar"
+    python3 bin/patch_apk_protection.py tmp/framework || exit 1
+    java -jar bin/apktool/APKEditor.jar b -f -i tmp/framework -o build/${app_patch_folder}/patched/framework.jar
+    cp -rfv build/${app_patch_folder}/patched/framework.jar build/portrom/images/system/system/framework/framework.jar
 fi
 
 
