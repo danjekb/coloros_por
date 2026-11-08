@@ -1,0 +1,148 @@
+name: Mirror Vivo ROM to Pixeldrain
+
+on:
+  workflow_dispatch:
+    inputs:
+      rom_url:
+        description: Direct HTTPS download URL from Vivo CDN
+        required: true
+        type: string
+      rom_filename:
+        description: Output ZIP filename
+        required: true
+        default: originos-donor.zip
+        type: string
+      runner:
+        description: Use a larger self-hosted Linux x64 runner if the ROM does not fit on GitHub-hosted disk
+        required: true
+        type: choice
+        default: ubuntu-24.04
+        options:
+          - ubuntu-24.04
+          - self-hosted
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "Linux", "X64"]') || inputs.runner }}
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout uploader
+        uses: actions/checkout@v4
+
+      - name: Validate inputs and Pixeldrain configuration
+        env:
+          ROM_URL: ${{ inputs.rom_url }}
+          ROM_FILENAME: ${{ inputs.rom_filename }}
+          PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          from urllib.parse import urlsplit
+
+          url = os.environ["ROM_URL"].strip()
+          parsed = urlsplit(url)
+          if parsed.scheme != "https" or not parsed.hostname:
+              raise SystemExit("rom_url must be a direct HTTPS URL")
+          host = parsed.hostname.lower()
+          if host != "vivo.com.cn" and not host.endswith(".vivo.com.cn"):
+              raise SystemExit(f"Expected a Vivo CDN URL, got host: {host}")
+
+          filename = os.environ["ROM_FILENAME"].strip()
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\\.zip", filename, re.IGNORECASE):
+              raise SystemExit("rom_filename must be a simple .zip filename (letters, digits, dot, underscore, hyphen)")
+          if not os.environ.get("PIXELDRAIN_API_KEY"):
+              raise SystemExit("Missing PIXELDRAIN_API_KEY in repository Actions secrets")
+          PY
+          echo "Runner disk before download:"
+          df -h .
+          echo "ROM_FILENAME=$ROM_FILENAME" >> "$GITHUB_ENV"
+
+      - name: Install download and validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends aria2 unzip python3-requests
+          aria2c --version | head -n 2
+
+      - name: Download Vivo ROM (resume and retry)
+        timeout-minutes: 300
+        env:
+          ROM_URL: ${{ inputs.rom_url }}
+          ROM_FILENAME: ${{ inputs.rom_filename }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/mirror
+          output="$PWD/build/mirror/$ROM_FILENAME"
+          echo "Downloading Vivo ROM to $output"
+          echo "The download can resume partial data and will retry slow/interrupted transfers."
+          aria2c \
+            --continue=true \
+            --allow-overwrite=true \
+            --auto-file-renaming=false \
+            --file-allocation=none \
+            --split=4 \
+            --max-connection-per-server=4 \
+            --min-split-size=32M \
+            --connect-timeout=30 \
+            --timeout=180 \
+            --lowest-speed-limit=8K \
+            --max-tries=30 \
+            --retry-wait=20 \
+            --summary-interval=30 \
+            --console-log-level=notice \
+            --download-result=full \
+            --check-certificate=true \
+            --http-accept-gzip=false \
+            --user-agent='okhttp/5.3.2' \
+            --header='userId: oplus-ota|16000020' \
+            --dir="$PWD/build/mirror" \
+            --out="$ROM_FILENAME" \
+            -- "$ROM_URL"
+          test -s "$output"
+          echo "Downloaded size:"
+          du -h "$output"
+          df -h .
+
+      - name: Verify ZIP and calculate SHA-256
+        env:
+          ROM_FILENAME: ${{ inputs.rom_filename }}
+        run: |
+          set -euo pipefail
+          rom="$PWD/build/mirror/$ROM_FILENAME"
+          echo "Testing archive integrity..."
+          unzip -tq "$rom"
+          sha256sum "$rom" | tee build/mirror/SHA256SUMS
+          {
+            echo "## Vivo ROM mirror"
+            echo
+            echo "- File: `$ROM_FILENAME`"
+            echo "- Size: $(stat -c '%s bytes' "$rom")"
+            echo "- SHA-256: `$(sha256sum "$rom" | awk '{print $1}')`"
+            echo "- ZIP integrity: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload verified ROM to Pixeldrain
+        timeout-minutes: 90
+        env:
+          PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+          ROM_FILENAME: ${{ inputs.rom_filename }}
+        run: |
+          set -euo pipefail
+          python3 bin/upload_pixeldrain.py "$PWD/build/mirror/$ROM_FILENAME"
+
+      - name: Show diagnostics on failure
+        if: failure()
+        run: |
+          echo "Runner disk:"
+          df -h .
+          if [[ -d build/mirror ]]; then
+            echo "Partial download, if any:"
+            ls -lh build/mirror
+          fi
