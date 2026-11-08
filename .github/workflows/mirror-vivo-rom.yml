@@ -56,7 +56,7 @@ jobs:
               raise SystemExit(f"Expected a Vivo CDN URL, got host: {host}")
 
           filename = os.environ["ROM_FILENAME"].strip()
-          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\\.zip", filename, re.IGNORECASE):
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.zip", filename, re.IGNORECASE):
               raise SystemExit("rom_filename must be a simple .zip filename (letters, digits, dot, underscore, hyphen)")
           if not os.environ.get("PIXELDRAIN_API_KEY"):
               raise SystemExit("Missing PIXELDRAIN_API_KEY in repository Actions secrets")
