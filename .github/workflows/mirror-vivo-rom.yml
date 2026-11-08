@@ -81,30 +81,52 @@ jobs:
           mkdir -p build/mirror
           output="$PWD/build/mirror/$ROM_FILENAME"
           echo "Downloading Vivo ROM to $output"
-          echo "The download can resume partial data and will retry slow/interrupted transfers."
-          aria2c \
-            --continue=true \
-            --allow-overwrite=true \
-            --auto-file-renaming=false \
-            --file-allocation=none \
-            --split=4 \
-            --max-connection-per-server=4 \
-            --min-split-size=32M \
-            --connect-timeout=30 \
-            --timeout=180 \
-            --lowest-speed-limit=8K \
-            --max-tries=30 \
-            --retry-wait=20 \
-            --summary-interval=30 \
-            --console-log-level=notice \
-            --download-result=full \
-            --check-certificate=true \
-            --http-accept-gzip=false \
-            --user-agent='okhttp/5.3.2' \
-            --header='userId: oplus-ota|16000020' \
-            --dir="$PWD/build/mirror" \
-            --out="$ROM_FILENAME" \
-            -- "$ROM_URL"
+          echo "Resume is enabled. Slow periods will not abort the transfer."
+          echo "The loop retries failed aria2 sessions without deleting the partial ZIP or .aria2 control file."
+
+          attempt=1
+          max_attempts=12
+          while (( attempt <= max_attempts )); do
+            echo
+            echo "========== Download attempt $attempt/$max_attempts =========="
+
+            if aria2c \
+              --continue=true \
+              --auto-file-renaming=false \
+              --file-allocation=none \
+              --allow-piece-length-change=true \
+              --split=2 \
+              --max-connection-per-server=2 \
+              --min-split-size=64M \
+              --connect-timeout=60 \
+              --timeout=300 \
+              --max-tries=10 \
+              --retry-wait=30 \
+              --summary-interval=60 \
+              --console-log-level=notice \
+              --download-result=full \
+              --check-certificate=true \
+              --http-accept-gzip=false \
+              --user-agent='okhttp/5.3.2' \
+              --header='userId: oplus-ota|16000020' \
+              --dir="$PWD/build/mirror" \
+              --out="$ROM_FILENAME" \
+              -- "$ROM_URL"; then
+              echo "aria2 reports download completed."
+              break
+            else
+              rc=$?
+              echo "::warning::aria2 attempt $attempt failed with exit code $rc."
+              if (( attempt == max_attempts )); then
+                echo "::error::Vivo CDN download failed after $max_attempts attempts."
+                exit "$rc"
+              fi
+              echo "Keeping partial data and retrying in 30 seconds..."
+              sleep 30
+            fi
+            ((attempt += 1))
+          done
+
           test -s "$output"
           echo "Downloaded size:"
           du -h "$output"
