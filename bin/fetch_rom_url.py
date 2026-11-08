@@ -14,6 +14,7 @@ import re
 import sys
 import time
 import urllib.request
+from urllib.parse import urlsplit, urlunsplit, urlencode, parse_qsl
 from typing import List, Optional, Tuple
 
 BASE_SITE = "https://roms.lian86.top"
@@ -29,6 +30,33 @@ KNOWN_BRANDS = [
     "vivo",
     "iQOO",
 ]
+
+
+def normalize_direct_url(query: str) -> str:
+    """Convert Pixeldrain share links to its downloadable API endpoint."""
+    q = query.strip()
+    if not q.startswith(("http://", "https://")):
+        return q
+
+    parsed = urlsplit(q)
+    host = (parsed.hostname or "").lower()
+    if host not in {"pixeldrain.com", "www.pixeldrain.com"}:
+        return q
+
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) == 2 and parts[0] == "u":
+        file_id = parts[1]
+    elif len(parts) == 3 and parts[:2] == ["api", "file"]:
+        file_id = parts[2]
+    else:
+        raise ValueError("Unsupported Pixeldrain URL. Use https://pixeldrain.com/u/FILE_ID")
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", file_id):
+        raise ValueError("Invalid Pixeldrain file ID")
+
+    query_items = [(key, value) for key, value in parse_qsl(parsed.query) if key != "download"]
+    query_items.append(("download", ""))
+    return urlunsplit(("https", "pixeldrain.com", f"/api/file/{file_id}", urlencode(query_items), ""))
 
 
 def is_direct_url(query: str) -> bool:
@@ -257,7 +285,7 @@ def resolve_rom_download_link_via_playwright(version_page_url: str, timeout_sec:
 def fetch_rom_url(query: str) -> str:
     query = query.strip()
     if is_direct_url(query):
-        return query
+        return normalize_direct_url(query)
 
     print(f"[fetch_rom_url] Searching roms.lian86.top for '{query}'...", file=sys.stderr)
     best = find_best_model(query)
